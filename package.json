@@ -1,0 +1,16 @@
+{
+  "name": "yoxi-argame",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix apps/mobile run dev",
+    "dev:api": "npm --prefix apps/api run dev",
+    "build": "npm --prefix apps/mobile run build",
+    "lint": "npm --prefix apps/mobile run lint",
+    "typecheck": "npm --prefix apps/mobile run typecheck && npm --prefix apps/api run typecheck",
+    "sync": "npm --prefix apps/mobile run build && npm --prefix apps/mobile exec cap sync",
+    "ios": "npm run sync && npm --prefix apps/mobile exec cap open ios",
+    "android": "npm run sync && npm --prefix apps/mobile exec cap open android",
+    "db:up": "docker compose -f infra/compose/compose.base.yml up -d",
+    "db:down": "docker compose -f infra/compose/compose.base.yml down"
+  }
+}

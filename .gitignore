@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# 環境變數（含 API key），絕對不要提交
+.env
+.env.*
+!.env.example
+
+# Capacitor 產出的原生專案（可由 `npx cap add` 重建；若要客製原生程式碼再拿掉這兩行）
+apps/mobile/ios/
+apps/mobile/android/

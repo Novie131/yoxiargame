@@ -1,0 +1,15 @@
+services:
+  postgres:
+    build:
+      context: ../postgres
+      dockerfile: Dockerfile
+    image: movequest-postgis:16-arm64
+    platform: linux/arm64
+    environment:
+      POSTGRES_DB: movequest
+      POSTGRES_USER: movequest
+      POSTGRES_PASSWORD: movequest
+    ports:
+      - "5432:5432"
+    volumes:
+      - movequest-postgres:/var/lib/postgresql/data

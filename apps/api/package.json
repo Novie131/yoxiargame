@@ -1,0 +1,23 @@
+{
+  "name": "api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/index.ts",
+    "build": "tsc -b",
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.46",
+    "@ai-sdk/openai-compatible": "^3.0.41",
+    "@hono/node-server": "^2.1.1",
+    "ai": "^7.0.85",
+    "hono": "^4.13.5",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2"
+  }
+}

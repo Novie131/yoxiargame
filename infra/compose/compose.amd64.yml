@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: movequest
+      POSTGRES_USER: movequest
+      POSTGRES_PASSWORD: movequest
+    ports:
+      - "5432:5432"
+    volumes:
+      - movequest-postgres:/var/lib/postgresql/data

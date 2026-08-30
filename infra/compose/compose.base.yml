@@ -1,0 +1,13 @@
+name: movequest
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - movequest-redis:/data
+
+volumes:
+  movequest-redis:
+  movequest-postgres:

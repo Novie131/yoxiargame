@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — 取樣自 Document/ 底下的 Figma 截圖。
+ * 取樣方式：解碼 PNG 後統計出現頻率最高的顏色，跨 11 張圖交叉比對。
+ * 拿到 Figma 編輯權限後，應改為對齊該檔案的 variables 命名。
+ */
+@theme {
+  /* 品牌 */
+  --color-primary: #d8654f;        /* 主要 CTA、選取態、active tab */
+  --color-primary-hover: #c8563f;
+  --color-primary-soft: #e18a7a;
+  --color-primary-muted: #e9b0a6;
+  --color-primary-tint: #fbf1ed;   /* 提示卡、chip 底色 */
+  --color-primary-tint-2: #fef8f5;
+  --color-brand-red: #ea3e28;      /* yoxi logo 紅，比主色更飽和 */
+
+  /* 文字 / 深色面 */
+  --color-ink: #162037;            /* 主要文字、深色卡片背景 */
+  --color-ink-2: #212936;
+  --color-muted: #505869;          /* 次要文字 */
+  --color-subtle: #8a8f9b;         /* 第三層文字、placeholder */
+  --color-line: #c4c7cc;           /* 邊框 */
+
+  /* 表面 */
+  --color-surface: #ffffff;
+  --color-surface-2: #f7f8fa;      /* 頁面底色 */
+  --color-surface-3: #f3f4f6;
+  --color-surface-4: #e9edf2;
+
+  /* 語意色 */
+  --color-success: #43846d;
+  --color-success-tint: #ebf7f1;
+  --color-info: #2d679d;
+  --color-info-tint: #e3f1fd;
+  --color-warning-tint: #fcf3cc;
+
+  /* 情境變體（下雨 / 紫外線）—— 取樣自 rainy- 與 uv-alert- 兩張稿 */
+  --color-page-cool: #f4f6f9;      /* 下雨情境的頁面底 */
+  --color-banner-cool: #e3f1fd;    /* 下雨情境的橫幅底 */
+  --color-banner-cool-ink: #2d679d;
+  --color-page-warm: #fffdf7;      /* 紫外線情境的頁面底 */
+  --color-banner-warm: #fefbed;    /* 紫外線情境的橫幅底 */
+  --color-banner-warm-ink: #a85923;
+
+  --radius-card: 16px;
+  --radius-chip: 999px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC",
+    "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* 原生殼裡不要讓內容被瀏海 / home indicator 蓋掉 */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
