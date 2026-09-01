@@ -1,10 +1,19 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 
+import { saveCommuteRoute } from '../db/repositories/commute.ts'
+
 /*
- * Agent 可用的工具。目前全部回假資料 —— 數值刻意對齊 Document/ 的設計稿，
- * 之後接真實來源時（中央氣象署、TDX、自家 DB）只要換掉 execute 的內容。
+ * Agent 可用的工具。
+ *
+ * save_commute_route 已接上真實資料庫；其餘仍回假資料，
+ * 數值刻意對齊 Document/ 的設計稿，之後接真實來源時只要換掉 execute 的內容。
+ *
+ * 待辦：目前沒有身分驗證，使用者一律記為 DEV_USER_REF。
+ * 接上登入後應改由請求帶入。
  */
+
+const DEV_USER_REF = 'dev-user'
 
 export const tools = {
   get_weather: tool({
@@ -86,14 +95,20 @@ export const tools = {
       destination: z.string().describe('目的地，例如「市政府站」'),
       mode: z.enum(['metro', 'bus', 'mixed']).describe('主要運具'),
     }),
-    execute: async ({ origin, destination, mode }) => ({
-      saved: true,
-      origin,
-      destination,
-      mode,
-      transfers: 3,
-      duration_minutes: 25,
-      notification_enabled: true,
-    }),
+    execute: async ({ origin, destination, mode }) => {
+      const saved = await saveCommuteRoute({
+        externalUserRef: DEV_USER_REF,
+        origin,
+        destination,
+        mode,
+      })
+      return {
+        saved: true,
+        origin: saved.origin,
+        destination: saved.destination,
+        mode: saved.mode,
+        notification_enabled: saved.notificationEnabled,
+      }
+    },
   }),
 }

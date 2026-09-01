@@ -10,7 +10,9 @@
     "sync": "npm --prefix apps/mobile run build && npm --prefix apps/mobile exec cap sync",
     "ios": "npm run sync && npm --prefix apps/mobile exec cap open ios",
     "android": "npm run sync && npm --prefix apps/mobile exec cap open android",
-    "db:up": "docker compose -f infra/compose/compose.base.yml up -d",
-    "db:down": "docker compose -f infra/compose/compose.base.yml down"
+    "db:up": "scripts/compose.sh up -d",
+    "db:down": "scripts/compose.sh down",
+    "db:logs": "scripts/compose.sh logs -f",
+    "db:migrate": "npm --prefix apps/api run migrate"
   }
 }

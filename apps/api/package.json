@@ -6,7 +6,8 @@
     "dev": "node --env-file-if-exists=.env --watch src/index.ts",
     "build": "tsc -b",
     "start": "node --env-file-if-exists=.env src/index.ts",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "migrate": "node --env-file-if-exists=.env src/db/migrate-cli.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.46",
@@ -14,10 +15,12 @@
     "@hono/node-server": "^2.1.1",
     "ai": "^7.0.85",
     "hono": "^4.13.5",
+    "pg": "^8.23.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
     "typescript": "^7.0.2"
   }
 }
