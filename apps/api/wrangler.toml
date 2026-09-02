@@ -27,6 +27,6 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 LLM_MAX_RETRIES = "2"
 LLM_MAX_OUTPUT_TOKENS = "8000"
 
-# 部署後改成你的 Cloudflare Pages 網址，例如 "https://yoxi.pages.dev"
-# 留空的話任何網站都能呼叫這個後端、消耗你的 API 額度
-ALLOWED_ORIGINS = ""
+# 只允許自己的前端呼叫。留空的話任何網站都能用這個後端、消耗 API 額度。
+# 注意這擋的是「其他網站」，不是「其他人」—— 使用者照常從下面這個網址使用。
+ALLOWED_ORIGINS = "https://yoxiargame.pages.dev"
