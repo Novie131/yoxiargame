@@ -4,6 +4,7 @@ import { cors } from 'hono/cors'
 import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
+import { getWeather } from './services/weather.ts'
 
 /*
  * Hono app 本體。Node（src/index.ts）與 Cloudflare Workers（src/worker.ts）
@@ -54,6 +55,33 @@ app.get('/health', (c) => {
     fallbackModel: process.env.LLM_FALLBACK_MODEL ?? null,
     allowedOrigins: process.env.ALLOWED_ORIGINS || '(未設定，目前全開)',
   })
+})
+
+/*
+ * 首頁標題列的即時天氣。前端傳定位座標進來，這裡代打外部 API：
+ * 瀏覽器不用直接連第三方（省掉 CORS 與之後換資料來源的麻煩），
+ * 而且回應在伺服器端有快取，不會每次開 App 都打一次。
+ */
+app.get('/weather', async (c) => {
+  const lat = Number(c.req.query('lat'))
+  const lon = Number(c.req.query('lon'))
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return c.json({ error: 'lat 與 lon 必須是數字' }, 400)
+  }
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return c.json({ error: 'lat 或 lon 超出合理範圍' }, 400)
+  }
+
+  try {
+    const weather = await getWeather(lat, lon)
+    /* 用戶端也快取幾分鐘，切分頁回來不用重打 */
+    c.header('Cache-Control', 'public, max-age=300')
+    return c.json(weather)
+  } catch (error) {
+    console.error('[weather]', error)
+    return c.json({ error: '天氣服務暫時無法取得' }, 502)
+  }
 })
 
 app.post('/agent/chat', async (c) => {

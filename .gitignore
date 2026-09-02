@@ -10,6 +10,12 @@ dist/
 !.env.example
 !.env.production.example
 
+# wrangler 的本機開發狀態（快取、模擬的儲存空間）
+.wrangler/
+
+# 個人的部署腳本，不進版控
+scripts/deploy.sh
+
 # 原生專案要進版控 —— 上架需要客製 Info.plist、隱私權清單、圖示與簽章設定，
 # 這些不能每次 `npx cap add` 重建。只排除建置產物與同步進去的 web 檔案。
 apps/mobile/ios/App/App/public/

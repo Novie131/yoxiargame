@@ -350,3 +350,58 @@ export function MapPinIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function SendIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" width="20" height="20">
+      <path
+        d="M12 19V5m0 0-6 6m6-6 6 6"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/* 以下三個給首頁標題列依即時天氣切換 */
+
+export function CloudIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" width="18" height="18">
+      <path
+        d="M7 18h10a3.5 3.5 0 0 0 .2-7 5 5 0 0 0-9.6-1.2A3.9 3.9 0 0 0 7 18Z"
+        fill="#9AA6B8"
+      />
+    </svg>
+  )
+}
+
+export function RainIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" width="18" height="18">
+      <path
+        d="M7 15h10a3.5 3.5 0 0 0 .2-7 5 5 0 0 0-9.6-1.2A3.9 3.9 0 0 0 7 15Z"
+        fill="#7E94B4"
+      />
+      <path
+        d="M9 18l-.8 2.5M13 18l-.8 2.5M17 18l-.8 2.5"
+        stroke="#5B87C7"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+export function MoonIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" width="18" height="18">
+      <path
+        d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"
+        fill="#8B93C4"
+      />
+    </svg>
+  )
+}

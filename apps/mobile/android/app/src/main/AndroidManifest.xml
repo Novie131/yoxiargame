@@ -38,4 +38,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 首頁的即時天氣要定位。WebView 的 navigator.geolocation 需要這兩個權限，
+         Capacitor 的 bridge 會在網頁請求定位時代為跳出系統授權對話框。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

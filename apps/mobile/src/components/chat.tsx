@@ -1,8 +1,32 @@
 import type { ReactNode } from 'react'
 
+import { useMember } from '@/lib/member'
+
 /* 對話氣泡。助理訊息無底色、時間戳在氣泡外；使用者訊息是主色底、時間戳在氣泡內 */
 
-export function Avatar({ emoji, ring }: { emoji: string; ring?: string }) {
+export function Avatar({
+  emoji,
+  src,
+  ring,
+  alt = '',
+}: {
+  emoji?: string
+  /* 有圖就用圖（會員頭貼），沒有才退回 emoji */
+  src?: string
+  ring?: string
+  alt?: string
+}) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={alt}
+        className="h-9 w-9 shrink-0 rounded-full object-cover"
+        style={{ background: ring ?? 'var(--color-surface-3)' }}
+      />
+    )
+  }
+
   return (
     <span
       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[20px]"
@@ -43,21 +67,27 @@ export function AssistantMessage({
 }
 
 export function UserMessage({
-  avatar = '🧑',
+  avatar,
   time,
   children,
 }: {
+  /* 不傳就用目前會員的頭貼；設計稿還原的畫面可以傳 emoji 蓋掉 */
   avatar?: string
   time?: string
   children: ReactNode
 }) {
+  const { avatarUrl, displayName } = useMember()
   return (
     <div className="flex justify-end gap-3">
       <div className="max-w-[78%] rounded-2xl bg-primary px-4 py-3 text-[15px] leading-[1.7] text-white">
         {children}
         {time && <p className="mt-1.5 text-[11px] text-white/75">{time}</p>}
       </div>
-      <Avatar emoji={avatar} ring="var(--color-ink)" />
+      {avatar ? (
+        <Avatar emoji={avatar} ring="var(--color-ink)" />
+      ) : (
+        <Avatar src={avatarUrl} alt={displayName} ring="var(--color-ink)" />
+      )}
     </div>
   )
 }

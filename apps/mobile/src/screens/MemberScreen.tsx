@@ -1,4 +1,5 @@
-import { ChevronLeftIcon, MemberIcon, PinIcon, StarIcon } from '@/components/icons'
+import { ChevronLeftIcon, PinIcon, StarIcon } from '@/components/icons'
+import { useMember } from '@/lib/member'
 
 /*
  * 會員頁 —— 設計稿未提供，這是依現有設計系統做的提案版。
@@ -9,8 +10,8 @@ import { ChevronLeftIcon, MemberIcon, PinIcon, StarIcon } from '@/components/ico
  *   任務進度     → 工作區/presentation-task-progress-modes 的 2/5 儀表
  *   常用路線     → 資料庫的 favorite_stations
  *
- * 目前後端沒有身分驗證（一律記為 DEV_USER_REF），所以資料是假的。
- * 接上登入後這頁要改成讀真實使用者資料。
+ * 目前後端沒有身分驗證（一律記為 DEV_USER_REF），所以統計數字仍是假的。
+ * 名稱與頭像已改吃 lib/member 的 store：沒註冊就顯示「陌生人」與預設頭像。
  */
 
 const stats = [
@@ -27,6 +28,8 @@ const menu = [
 ]
 
 export function MemberScreen() {
+  const { displayName, avatarUrl, registered } = useMember()
+
   return (
     <div className="min-h-full bg-surface-2 pb-6">
       <header className="bg-surface px-5 pb-5 pt-2">
@@ -36,16 +39,24 @@ export function MemberScreen() {
       <div className="px-4">
         {/* 身分卡 */}
         <div className="mt-4 flex items-center gap-4 rounded-2xl bg-ink px-5 py-4 text-white">
-          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/15">
-            <MemberIcon />
-          </span>
+          <img
+            src={avatarUrl}
+            alt={displayName}
+            className="h-14 w-14 shrink-0 rounded-full bg-white/15 object-cover"
+          />
           <div className="min-w-0">
-            <p className="text-[19px] font-bold">志明</p>
+            <p className="text-[19px] font-bold">{displayName}</p>
             <p className="mt-0.5 flex items-center gap-1.5 text-[13px] text-white/75">
-              <span className="rounded-md bg-primary px-2 py-0.5 text-[11px] font-semibold text-white">
-                Lv.12
-              </span>
-              城市探索家
+              {registered ? (
+                <>
+                  <span className="rounded-md bg-primary px-2 py-0.5 text-[11px] font-semibold text-white">
+                    Lv.12
+                  </span>
+                  城市探索家
+                </>
+              ) : (
+                '尚未註冊'
+              )}
             </p>
           </div>
         </div>

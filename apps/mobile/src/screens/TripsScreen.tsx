@@ -1,14 +1,19 @@
 import { BellIcon } from '@/components/icons'
-import { formatDateWithWeekday } from '@/lib/datetime'
+import { formatDateWithWeekday, greeting } from '@/lib/datetime'
+import { useMember } from '@/lib/member'
 
 /* 對應設計稿 frame：行程 – 常用路線 */
 
 function NextLegCard() {
+  const { displayName } = useMember()
+
   return (
     <div className="rounded-2xl bg-ink px-5 py-4 text-white">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[13px] text-white/70">早安，志明</p>
+          <p className="text-[13px] text-white/70">
+            {greeting()}，{displayName}
+          </p>
           <h2 className="mt-1 text-[20px] font-bold">下一段：前往公司</h2>
         </div>
         <span className="shrink-0 rounded-full bg-success px-4 py-2 text-[14px] font-semibold">

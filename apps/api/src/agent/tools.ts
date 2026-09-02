@@ -3,11 +3,12 @@ import { z } from 'zod'
 
 import { hasDatabase } from '../db/client.ts'
 import { saveCommuteRoute } from '../db/repositories/commute.ts'
+import { geocodeDistrict, getWeather } from '../services/weather.ts'
 
 /*
  * Agent 可用的工具。
  *
- * save_commute_route 已接上真實資料庫；其餘仍回假資料，
+ * save_commute_route 已接上真實資料庫，get_weather 已接上即時天氣；其餘仍回假資料，
  * 數值刻意對齊 Document/ 的設計稿，之後接真實來源時只要換掉 execute 的內容。
  *
  * 待辦：目前沒有身分驗證，使用者一律記為 DEV_USER_REF。
@@ -18,19 +19,37 @@ const DEV_USER_REF = 'dev-user'
 
 export const tools = {
   get_weather: tool({
-    description: '查詢指定行政區目前的天氣、氣溫、紫外線指數與降雨預報。',
+    description: '查詢指定行政區目前的天氣、氣溫、紫外線指數與降雨。',
     inputSchema: z.object({
       district: z.string().describe('行政區，例如「信義區」「大安區」'),
     }),
-    execute: async ({ district }) => ({
-      district,
-      temperature_c: 32,
-      condition: '晴',
-      uv_index: 9,
-      uv_level: '過量級',
-      rain_forecast: null,
-      advice: '紫外線偏高，記得防曬與補充水分',
-    }),
+    /*
+     * 真實資料。查不到地點或外部服務掛掉時回傳 error 欄位，
+     * 讓模型照實說「查不到」，而不是自己編一個溫度出來。
+     */
+    execute: async ({ district }) => {
+      try {
+        const place = await geocodeDistrict(district)
+        if (!place) return { district, error: `查不到「${district}」這個地點` }
+
+        const w = await getWeather(place.lat, place.lon)
+        return {
+          district: w.location ?? district,
+          temperature_c: w.temperatureC,
+          feels_like_c: w.feelsLikeC,
+          humidity_percent: w.humidity,
+          condition: w.condition,
+          precipitation_mm: w.precipitationMm,
+          uv_index: w.uvIndex,
+          uv_level: w.uvLevel,
+          advice: w.advice ? `${w.advice.title}，${w.advice.body}` : null,
+          observed_at: w.observedAt,
+        }
+      } catch (error) {
+        console.error('[get_weather]', error)
+        return { district, error: '天氣服務暫時無法取得' }
+      }
+    },
   }),
 
   get_transit_status: tool({
