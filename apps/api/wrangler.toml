@@ -9,7 +9,9 @@
 
 name = "yoxi-api"
 main = "src/worker.ts"
-compatibility_date = "2026-09-03"
+# 注意：Cloudflare 用 UTC 判斷，不能填未來日期。
+# 台灣是 UTC+8，本機日期常比 UTC 早一天，所以刻意往前抓。
+compatibility_date = "2026-09-01"
 
 # 讓 Workers 支援 process.env 與部分 Node API，程式碼才能與本機版一致
 compatibility_flags = ["nodejs_compat"]
