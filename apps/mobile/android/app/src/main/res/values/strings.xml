@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">yoxi</string>
+    <string name="title_activity_main">yoxi</string>
+    <string name="package_name">tw.com.yoxi.argame</string>
+    <string name="custom_url_scheme">tw.com.yoxi.argame</string>
+</resources>

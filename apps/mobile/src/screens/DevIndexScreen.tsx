@@ -37,6 +37,13 @@ const groups = [
     ],
   },
   {
+    title: '設定與會員（提案版，無設計稿）',
+    items: [
+      { to: '/settings', label: '設定', file: '無設計稿' },
+      { to: '/member', label: '會員', file: '無設計稿' },
+    ],
+  },
+  {
     title: '行程',
     items: [
       { to: '/trips', label: '常用路線', file: '行程-常用路線/trips-frequent-routes.png' },

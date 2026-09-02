@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CAPACITOR_DEBUG</key>
+	<string>$(CAPACITOR_DEBUG)</string>
+	<!-- 主要市場為台灣，開發區域設為繁體中文（影響 App Store 預設語言） -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hant</string>
+	<key>CFBundleDisplayName</key>
+        <string>yoxi</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+    <key>UISceneConfigurations</key>
+    <dict>
+      <key>UIWindowSceneSessionRoleApplication</key>
+      <array>
+        <dict>
+            <key>UISceneConfigurationName</key>
+            <string>Default Configuration</string>
+            <key>UISceneDelegateClassName</key>
+            <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+            <key>UISceneStoryboardFile</key>
+            <string>Main</string>
+        </dict>
+      </array>
+    </dict>
+	</dict>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<!-- Capacitor 樣板預設是 armv7（32 位元，早已淘汰），改為 arm64 -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<!-- 設計稿只有直式版面，開放橫式會讓畫面破版 -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!--
+	  權限用途說明。
+	  iOS 規則：使用對應 API 前若沒有這些字串，App 會直接閃退。
+	  Apple 也會逐條審查文字是否具體說明用途，寫得含糊會被退件。
+
+	  以下權限對應尚未實作的功能，先寫好以免日後遺漏：
+	    定位     → 地理圍欄任務、通勤提醒、叫車上車點
+	    背景定位 → 任務進行中的位置追蹤（審查最嚴格，送審時要在
+	               App Review 備註欄說明遊戲機制為何需要）
+	    相機     → AR 任務
+	    動作感測 → 步數統計（散步任務）
+	    照片     → 使用者頭像
+	-->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>yoxi 需要您的位置，才能顯示附近的探索任務、規劃通勤路線，並在您叫車時標定上車地點。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>yoxi 需要在背景取得您的位置，才能在您接近任務地點時即時通知，並在通勤路線異常時主動提醒。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>yoxi 需要使用相機，才能在實景中顯示 AR 任務內容。</string>
+	<key>NSMotionUsageDescription</key>
+	<string>yoxi 需要動作與健身資料，才能計算您在散步任務中的步數與距離。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>yoxi 需要存取照片，才能讓您設定個人頭像。</string>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+</dict>
+</plist>

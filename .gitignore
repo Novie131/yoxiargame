@@ -8,7 +8,15 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
-# Capacitor 產出的原生專案（可由 `npx cap add` 重建；若要客製原生程式碼再拿掉這兩行）
-apps/mobile/ios/
-apps/mobile/android/
+# 原生專案要進版控 —— 上架需要客製 Info.plist、隱私權清單、圖示與簽章設定，
+# 這些不能每次 `npx cap add` 重建。只排除建置產物與同步進去的 web 檔案。
+apps/mobile/ios/App/App/public/
+apps/mobile/ios/App/build/
+apps/mobile/ios/App/Pods/
+apps/mobile/android/app/src/main/assets/public/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/android/.gradle/
+apps/mobile/android/local.properties

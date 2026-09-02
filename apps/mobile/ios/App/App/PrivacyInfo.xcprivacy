@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  隱私權資訊清單（Apple 自 2024 年起強制要求，缺少會被退件）
+
+  重要：這份清單必須如實反映 App 的實際行為，寫錯比沒寫更糟。
+  目前記錄的是「現階段」的狀態 —— 尚未實作登入、定位、相機。
+  每次新增下列功能時，都必須回來更新這個檔案：
+
+    加入定位（expo/capacitor geolocation）
+      → NSPrivacyCollectedDataTypes 補上 NSPrivacyCollectedDataTypeCoarseLocation
+        與 NSPrivacyCollectedDataTypePreciseLocation
+    加入登入
+      → 補上 NSPrivacyCollectedDataTypeUserID、NSPrivacyCollectedDataTypeEmailAddress
+    加入相機／AR
+      → 相機影像若未離開裝置則不需申報，若上傳則要申報
+    加入分析（analytics_events 表已預留）
+      → 補上 NSPrivacyCollectedDataTypeProductInteraction
+
+  NSPrivacyAccessedAPITypes 的四項是 Capacitor / WKWebView 執行期會用到的，
+  即使我們自己的程式碼沒直接呼叫也必須申報。
+-->
+<plist version="1.0">
+<dict>
+  <!-- 不做跨 App 追蹤，也不接第三方廣告 SDK -->
+  <key>NSPrivacyTracking</key>
+  <false/>
+
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+
+  <!-- 現階段尚未蒐集任何可識別個人的資料 -->
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array/>
+
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <!-- CA92.1：僅存取本 App 自己的偏好設定 -->
+        <string>CA92.1</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <!-- C617.1：存取本 App 容器內檔案的時間戳 -->
+        <string>C617.1</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <!-- 35F9.1：量測 App 內事件的經過時間 -->
+        <string>35F9.1</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <!-- E174.1：寫入前確認可用空間，避免寫入失敗 -->
+        <string>E174.1</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

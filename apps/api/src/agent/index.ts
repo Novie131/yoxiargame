@@ -23,11 +23,11 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 export type ChatMessage = ModelMessage
 
 /*
- * NIM 會間歇回 503 Service temporarily overloaded（實測連續兩次都 503，
- * 第三次才成功），所以重試次數要比預設的 2 次高。
- * AI SDK 會做指數退避，不需要自己實作。
+ * NIM 會間歇回 503 Service temporarily overloaded。
+ * 重試次數刻意壓低 —— 實測重試 5 次會讓最壞情況拖到 65 秒，
+ * 與其在同一個過載的模型上等，不如早點切換到備援模型。
  */
-const MAX_RETRIES = Number(process.env.LLM_MAX_RETRIES ?? 5)
+const MAX_RETRIES = Number(process.env.LLM_MAX_RETRIES ?? 2)
 
 /*
  * 這是 reasoning 模型 —— 回一句話就可能燒掉數百個 token 在推理上。
