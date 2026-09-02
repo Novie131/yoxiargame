@@ -1,0 +1,30 @@
+# Cloudflare Workers 部署設定
+#
+# 免費方案：每天 10 萬次請求，且不會像 Render 免費版那樣閒置休眠。
+#
+# 部署前要設定的機密（不要寫在這個檔案裡，它會進版控）：
+#   npx wrangler secret put NVIDIA_API_KEY
+#
+# 或直接在 Cloudflare 主控台的 Settings → Variables and Secrets 設定。
+
+name = "yoxi-api"
+main = "src/worker.ts"
+compatibility_date = "2026-09-03"
+
+# 讓 Workers 支援 process.env 與部分 Node API，程式碼才能與本機版一致
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[vars]
+LLM_PROVIDER = "nvidia"
+NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+LLM_FALLBACK_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+LLM_MAX_RETRIES = "2"
+LLM_MAX_OUTPUT_TOKENS = "8000"
+
+# 部署後改成你的 Cloudflare Pages 網址，例如 "https://yoxi.pages.dev"
+# 留空的話任何網站都能呼叫這個後端、消耗你的 API 額度
+ALLOWED_ORIGINS = ""

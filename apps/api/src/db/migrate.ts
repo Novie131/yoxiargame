@@ -16,7 +16,7 @@ const MIGRATIONS_DIR = join(
 )
 
 async function ensureMigrationsTable(): Promise<void> {
-  await db().query(`
+  await (await db()).query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       filename text PRIMARY KEY,
       applied_at timestamptz NOT NULL DEFAULT now()
@@ -25,7 +25,7 @@ async function ensureMigrationsTable(): Promise<void> {
 }
 
 async function appliedFilenames(): Promise<Set<string>> {
-  const { rows } = await db().query<{ filename: string }>(
+  const { rows } = await (await db()).query<{ filename: string }>(
     'SELECT filename FROM schema_migrations',
   )
   return new Set(rows.map((r) => r.filename))

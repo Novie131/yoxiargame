@@ -8,7 +8,9 @@
     "start": "node --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc -b",
     "migrate": "node --env-file-if-exists=.env src/db/migrate-cli.ts",
-    "lang-check": "node --env-file-if-exists=.env scripts/lang-check.ts"
+    "lang-check": "node --env-file-if-exists=.env scripts/lang-check.ts",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.46",
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "@types/pg": "^8.23.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.128.0"
   }
 }

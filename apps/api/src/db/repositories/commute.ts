@@ -1,3 +1,5 @@
+import type { PoolClient } from 'pg'
+
 import { withTransaction } from '../client.ts'
 
 /*
@@ -31,7 +33,7 @@ export type SavedCommuteRoute = {
 
 /** 取得或建立外部使用者對應，回傳內部 uuid */
 async function upsertUserRef(
-  client: import('pg').PoolClient,
+  client: PoolClient,
   provider: string,
   externalRef: string,
 ): Promise<string> {
