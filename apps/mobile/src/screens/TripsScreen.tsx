@@ -1,4 +1,5 @@
 import { BellIcon } from '@/components/icons'
+import { formatDateWithWeekday } from '@/lib/datetime'
 
 /* 對應設計稿 frame：行程 – 常用路線 */
 
@@ -92,7 +93,9 @@ export function TripsScreen() {
       <header className="flex items-start justify-between bg-surface px-5 pb-5 pt-2">
         <div>
           <h1 className="text-[26px] font-bold tracking-tight">我的行程</h1>
-          <p className="mt-1 text-[13px] text-muted">8 月 26 日・星期三</p>
+          {/* 設計稿寫的是 8 月 26 日・星期三（2026 年該日確實是星期三），
+              但日期應該跟著今天走，不能寫死 */}
+          <p className="mt-1 text-[13px] text-muted">{formatDateWithWeekday()}</p>
         </div>
         <button type="button" aria-label="通知" className="relative pt-1.5">
           <BellIcon />
