@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
-import { streamAgentReply, type ChatMessage } from './agent/index.ts'
+import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
 
 const app = new Hono()
 
@@ -18,13 +18,27 @@ app.post('/agent/chat', async (c) => {
     return c.json({ error: 'messages 為必填，且不可為空陣列' }, 400)
   }
 
-  try {
-    // 純文字串流，前端直接讀 response.body 即可，不用實作額外協定
-    return streamAgentReply(messages).toTextStreamResponse()
-  } catch (error) {
-    console.error('[agent/chat]', error)
-    return c.json({ error: error instanceof Error ? error.message : '未知錯誤' }, 500)
-  }
+  // 純文字串流，前端直接讀 response.body 即可，不用實作額外協定
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of streamAgentReplyWithFallback(messages)) {
+          controller.enqueue(encoder.encode(chunk))
+        }
+      } catch (error) {
+        console.error('[agent/chat]', error)
+        // 串流已經開始，無法改回 500，只能在內容尾端附上錯誤訊息
+        controller.enqueue(encoder.encode('\n\n[發生錯誤，請稍後再試]'))
+      } finally {
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  })
 })
 
 const port = Number(process.env.PORT ?? 3000)
