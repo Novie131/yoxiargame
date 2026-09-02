@@ -7,6 +7,15 @@ import { Pool } from 'pg'
 
 let pool: Pool | undefined
 
+/*
+ * 資料庫是選配的。
+ * Demo 部署時常常只想跑前端與 Agent，不想另外開一台 Postgres，
+ * 所以沒設定 DATABASE_URL 時要能正常啟動，只是寫入類的工具會停用。
+ */
+export function hasDatabase(): boolean {
+  return Boolean(process.env.DATABASE_URL)
+}
+
 export function db(): Pool {
   if (!pool) {
     const connectionString = process.env.DATABASE_URL

@@ -3,12 +3,19 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
 import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
+import { hasDatabase } from './db/client.ts'
 
 const app = new Hono()
 
 app.use('/*', cors())
 
-app.get('/health', (c) => c.json({ ok: true, provider: process.env.LLM_PROVIDER ?? 'nvidia' }))
+app.get('/health', (c) =>
+  c.json({
+    ok: true,
+    provider: process.env.LLM_PROVIDER ?? 'nvidia',
+    database: hasDatabase() ? 'connected' : 'disabled',
+  }),
+)
 
 app.post('/agent/chat', async (c) => {
   const body = await c.req.json<{ messages?: ChatMessage[] }>()

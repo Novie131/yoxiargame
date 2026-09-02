@@ -1,6 +1,7 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 
+import { hasDatabase } from '../db/client.ts'
 import { saveCommuteRoute } from '../db/repositories/commute.ts'
 
 /*
@@ -96,6 +97,19 @@ export const tools = {
       mode: z.enum(['metro', 'bus', 'mixed']).describe('主要運具'),
     }),
     execute: async ({ origin, destination, mode }) => {
+      // 沒有設定 DATABASE_URL 時（例如純 demo 部署）回傳模擬結果，
+      // 讓對話流程完整，只是資料不會真的留下。
+      if (!hasDatabase()) {
+        return {
+          saved: true,
+          persisted: false,
+          origin,
+          destination,
+          mode,
+          notification_enabled: true,
+        }
+      }
+
       const saved = await saveCommuteRoute({
         externalUserRef: DEV_USER_REF,
         origin,
@@ -104,6 +118,7 @@ export const tools = {
       })
       return {
         saved: true,
+        persisted: true,
         origin: saved.origin,
         destination: saved.destination,
         mode: saved.mode,

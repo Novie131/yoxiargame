@@ -5,6 +5,19 @@
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
     <title>yoxi</title>
+
+    <!-- PWA：讓使用者可以「加入主畫面」，開起來沒有網址列、全螢幕，像原生 App -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#D8654F" />
+
+    <!-- iOS 不讀 manifest 的大部分欄位，要用這幾個專屬標籤 -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="yoxi" />
+
+    <meta name="description" content="城市探索任務、通勤助理與叫車服務" />
   </head>
   <body>
     <div id="root"></div>

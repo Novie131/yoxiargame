@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "comment": "SPA 路由都在前端，全部導回 index.html，否則直接開網址會 404",
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

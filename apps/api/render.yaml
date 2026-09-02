@@ -1,0 +1,20 @@
+# Render 部署設定。Railway 與 Fly.io 會直接讀 Dockerfile，不需要這個檔案。
+services:
+  - type: web
+    name: yoxi-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_PROVIDER
+        value: nvidia
+      - key: NVIDIA_MODEL
+        value: nvidia/nemotron-3-super-120b-a12b
+      - key: LLM_FALLBACK_MODEL
+        value: nvidia/nemotron-3.5-lightning-30b-a3b
+      # 這兩個要在 Render 的介面上手動填，不要寫進檔案
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
