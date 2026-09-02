@@ -4,7 +4,6 @@ import { cors } from 'hono/cors'
 import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
-import { seenEnvKeys } from './worker.ts'
 
 /*
  * Hono app 本體。Node（src/index.ts）與 Cloudflare Workers（src/worker.ts）
@@ -54,12 +53,6 @@ app.get('/health', (c) => {
     model: process.env.NVIDIA_MODEL ?? process.env.LOCAL_MODEL ?? null,
     fallbackModel: process.env.LLM_FALLBACK_MODEL ?? null,
     allowedOrigins: process.env.ALLOWED_ORIGINS || '(未設定，目前全開)',
-    /* 診斷：只列名稱，不列值 */
-    diag: {
-      envBindingKeys: seenEnvKeys,
-      processEnvHasKey: Object.keys(process.env).includes(keyName),
-      processEnvKeyCount: Object.keys(process.env).length,
-    },
   })
 })
 

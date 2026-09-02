@@ -9,17 +9,17 @@ import { app } from './app.ts'
  *
  * 這裡在每次請求時把 env 併進 process.env，讓 agent/ 與 db/ 沿用
  * 同一套 process.env 寫法，Node 與 Workers 行為一致。
+ *
+ * 部署踩過的坑：Dashboard 的「Variables and Secrets」介面在搭配
+ * Workers Builds 時不會真的把 secret 綁上去 —— 畫面上看得到，
+ * 但 Worker 執行時的 env 裡沒有它。必須用 CLI 設定：
+ *   npx wrangler secret put NVIDIA_API_KEY
+ * 這種方式綁在 Worker script 本身而非某個版本，會在後續部署間保留。
  */
-
-/* 診斷用：記錄實際從 env 綁定看到哪些「名稱」。永遠不記錄值。 */
-export const seenEnvKeys: string[] = []
 
 export default {
   fetch(request: Request, env: Record<string, unknown>, ctx: ExecutionContext) {
-    seenEnvKeys.length = 0
-    for (const key of Object.keys(env ?? {})) {
-      seenEnvKeys.push(key)
-      const value = (env as Record<string, unknown>)[key]
+    for (const [key, value] of Object.entries(env ?? {})) {
       // 只複製字串型設定，KV、R2 之類的資源綁定不屬於環境變數
       if (typeof value === 'string') process.env[key] = value
     }
