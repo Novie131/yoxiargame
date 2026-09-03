@@ -65,5 +65,17 @@ Capacitor 8 使用 Swift Package Manager，不需要 CocoaPods。
 設計稿 11 個畫面已實作完成，資料全為假資料。
 詳細進度與待辦見 `Document/README.md`。
 
-未完成：設定頁與會員頁（設計稿未提供）、真實地圖圖磚、
-外部資料串接（中央氣象署、TDX）、資料庫連線。
+未完成：設定頁與會員頁（設計稿未提供）、真實地圖圖磚、中央氣象署串接。
+
+捷運與公車即時狀態已接上 TDX（需在 `.env` 填 `TDX_CLIENT_ID` / `TDX_CLIENT_SECRET`），
+端點為 `/transit/metro?line=` 與 `/transit/bus?route=&city=&stop=`。
+
+TDX 實測額度是**每分鐘 5 次**，不是文件寫的每秒 50 次，所以
+`services/tdx.ts` 的快取、併發合流與配額守門都不能拿掉。
+兩邊拿得到的資料不對稱，畫面上不要硬湊成一樣：
+
+| | 捷運 | 公車 |
+|---|---|---|
+| 到站倒數 | 無（LiveBoard 只有「正在進站」快照） | 有，真實秒數 |
+| 誤點分鐘數 | 無 | 無 |
+| 事件通報 | 有 | 有 |

@@ -1,6 +1,7 @@
 import { ChatComposer } from '@/components/ChatComposer'
 import { AssistantMessage, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
+import { TransitStatus } from '@/components/TransitStatus'
 import { TransportCard } from '@/components/TransportCard'
 import { ClockIcon, PinIcon } from '@/components/icons'
 
@@ -39,6 +40,7 @@ export function CommuteSetupScreen() {
                 <PinIcon />3 個轉乘站
               </span>
             </div>
+            <TransitStatus line="板南線" />
           </TransportCard>
         </AssistantMessage>
       </div>

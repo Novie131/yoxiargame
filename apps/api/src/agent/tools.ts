@@ -3,12 +3,19 @@ import { z } from 'zod'
 
 import { hasDatabase } from '../db/client.ts'
 import { saveCommuteRoute } from '../db/repositories/commute.ts'
+import {
+  getBusStatus,
+  getMetroStatus,
+  hasTdxCredentials,
+  isBusCity,
+} from '../services/tdx.ts'
 import { geocodeDistrict, getWeather } from '../services/weather.ts'
 
 /*
  * Agent 可用的工具。
  *
- * save_commute_route 已接上真實資料庫，get_weather 已接上即時天氣；其餘仍回假資料，
+ * save_commute_route 已接上真實資料庫，get_weather 已接上即時天氣，
+ * get_transit_status 的捷運與公車都已接上 TDX；其餘仍回假資料，
  * 數值刻意對齊 Document/ 的設計稿，之後接真實來源時只要換掉 execute 的內容。
  *
  * 待辦：目前沒有身分驗證，使用者一律記為 DEV_USER_REF。
@@ -54,19 +61,74 @@ export const tools = {
 
   get_transit_status: tool({
     description:
-      '查詢捷運或公車路線目前的營運狀況，包含是否誤點與誤點分鐘數。使用者問通勤、路線正不正常時使用。',
+      '查詢捷運或公車路線目前的營運狀況與事件通報。使用者問通勤、路線正不正常時使用。',
     inputSchema: z.object({
       line: z.string().describe('路線名稱，例如「板南線」「307」'),
       mode: z.enum(['metro', 'bus']).describe('運具類型'),
+      stop: z
+        .string()
+        .optional()
+        .describe('公車站牌名稱，例如「板橋放送所」。使用者問「我這站還有多久」時要帶。'),
+      city: z
+        .string()
+        .optional()
+        .describe('公車所屬縣市代碼，例如 Taipei、NewTaipei。預設 Taipei。'),
     }),
-    execute: async ({ line, mode }) => ({
-      line,
-      mode,
-      status: 'normal',
-      delay_minutes: 0,
-      estimated_duration_minutes: 25,
-      note: '路線正常',
-    }),
+    /*
+     * 捷運與公車都接上 TDX 了，但兩邊能拿到的東西差很多：
+     *   捷運 只有營運事件，沒有誤點分鐘數，也沒有到站倒數
+     *   公車 有真正的到站秒數，還有站牌層級的狀態
+     * 所以回傳欄位刻意不一致 —— 硬湊成一樣只會讓模型講出沒有根據的數字。
+     */
+    execute: async ({ line, mode, stop, city }) => {
+      if (!hasTdxCredentials()) {
+        return { line, mode, error: 'TDX 金鑰未設定，查不到即時交通狀態' }
+      }
+
+      if (mode === 'bus') {
+        const cityCode = city?.trim() || 'Taipei'
+        if (!isBusCity(cityCode)) {
+          return { line, mode, error: `不支援的縣市代碼「${cityCode}」` }
+        }
+
+        try {
+          const bus = await getBusStatus(cityCode, line, stop)
+          return {
+            line: bus.route,
+            mode,
+            data_source: 'tdx',
+            city: bus.city,
+            stop_not_found: bus.stopNotFound,
+            arrivals: bus.stops,
+            incidents: bus.incidents,
+            note: bus.note,
+            observed_at: bus.observedAt,
+          }
+        } catch (error) {
+          console.error('[get_transit_status:bus]', error)
+          return { line, mode, error: '公車即時服務暫時無法取得' }
+        }
+      }
+
+      try {
+        const status = await getMetroStatus(line)
+        if (!status) return { line, mode, error: `查不到「${line}」這條捷運路線` }
+
+        return {
+          line: status.line,
+          mode,
+          data_source: 'tdx',
+          status: status.status,
+          incidents: status.incidents,
+          arriving_now: status.arrivingNow,
+          note: status.note,
+          observed_at: status.observedAt,
+        }
+      } catch (error) {
+        console.error('[get_transit_status]', error)
+        return { line, mode, error: '捷運即時服務暫時無法取得' }
+      }
+    },
   }),
 
   estimate_ride: tool({

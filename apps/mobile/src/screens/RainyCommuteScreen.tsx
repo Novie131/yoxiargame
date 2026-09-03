@@ -4,6 +4,7 @@ import { ChatComposer } from '@/components/ChatComposer'
 import { AssistantMessage, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
 import { SituationBanner } from '@/components/SituationBanner'
+import { TransitStatus } from '@/components/TransitStatus'
 import { TransportCard } from '@/components/TransportCard'
 
 /* 對應設計稿 frame：rainy-commute-notification */
@@ -35,6 +36,11 @@ export function RainyCommuteScreen() {
         <AssistantMessage card time="09:42 AM">
           志明，根據氣象資料，您的通勤路線沿途目前開始下雨了！🌂
           預計降雨將持續約 1 小時。考慮到雨天路況，建議您今天改搭計程車前往公司。
+        </AssistantMessage>
+
+        <AssistantMessage card time="09:42 AM">
+          您平常搭的板南線目前狀況如下：
+          <TransitStatus line="板南線" />
         </AssistantMessage>
 
         <AssistantMessage card time="09:43 AM">

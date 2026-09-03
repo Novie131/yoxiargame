@@ -4,6 +4,7 @@ import { cors } from 'hono/cors'
 import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
+import { getBusStatus, getMetroStatus, hasTdxCredentials, isBusCity } from './services/tdx.ts'
 import { getWeather } from './services/weather.ts'
 
 /*
@@ -51,6 +52,7 @@ app.get('/health', (c) => {
     provider,
     database: hasDatabase() ? 'connected' : 'disabled',
     apiKeyConfigured: Boolean(process.env[keyName]),
+    tdxConfigured: hasTdxCredentials(),
     model: process.env.NVIDIA_MODEL ?? process.env.LOCAL_MODEL ?? null,
     fallbackModel: process.env.LLM_FALLBACK_MODEL ?? null,
     allowedOrigins: process.env.ALLOWED_ORIGINS || '(未設定，目前全開)',
@@ -81,6 +83,52 @@ app.get('/weather', async (c) => {
   } catch (error) {
     console.error('[weather]', error)
     return c.json({ error: '天氣服務暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 捷運與公車即時狀態，資料來自 TDX。
+ *
+ * 一定要由後端代打，不能讓前端直接連 TDX：
+ *   1. 金鑰不能進到瀏覽器
+ *   2. TDX 額度只有每分鐘 5 次，集中在後端才有辦法共用快取與配額守門
+ *
+ * Cache-Control 的秒數刻意跟 services/tdx.ts 的 TTL 一致，
+ * 讓用戶端在同一個時間窗內不會重複回來要。
+ */
+app.get('/transit/metro', async (c) => {
+  const line = c.req.query('line')?.trim()
+  if (!line) return c.json({ error: '缺少 line 參數' }, 400)
+  if (!hasTdxCredentials()) return c.json({ error: 'TDX 金鑰未設定' }, 503)
+
+  try {
+    const status = await getMetroStatus(line)
+    if (!status) return c.json({ error: `查不到「${line}」這條捷運路線` }, 404)
+
+    c.header('Cache-Control', 'public, max-age=30')
+    return c.json(status)
+  } catch (error) {
+    console.error('[transit/metro]', error)
+    return c.json({ error: '捷運即時服務暫時無法取得' }, 502)
+  }
+})
+
+app.get('/transit/bus', async (c) => {
+  const route = c.req.query('route')?.trim()
+  const city = c.req.query('city')?.trim() || 'Taipei'
+  const stop = c.req.query('stop')?.trim() || undefined
+
+  if (!route) return c.json({ error: '缺少 route 參數' }, 400)
+  if (!isBusCity(city)) return c.json({ error: `不支援的縣市代碼「${city}」` }, 400)
+  if (!hasTdxCredentials()) return c.json({ error: 'TDX 金鑰未設定' }, 503)
+
+  try {
+    const status = await getBusStatus(city, route, stop)
+    c.header('Cache-Control', 'public, max-age=30')
+    return c.json(status)
+  } catch (error) {
+    console.error('[transit/bus]', error)
+    return c.json({ error: '公車即時服務暫時無法取得' }, 502)
   }
 })
 
