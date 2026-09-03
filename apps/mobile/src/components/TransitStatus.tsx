@@ -30,10 +30,16 @@ export function TransitStatus({ line }: { line: string }) {
     <div className="mt-2 text-[13px]">
       <div className="flex items-center gap-2">
         <span
-          className={`size-2 shrink-0 rounded-full ${alert ? 'bg-amber-500' : 'bg-emerald-500'}`}
+          className="size-2 shrink-0 rounded-full"
+          style={{
+            background: alert ? 'var(--color-banner-warm-ink)' : 'var(--color-success)',
+          }}
         />
         <span className="font-semibold">{metro.line}</span>
-        <span className={alert ? 'text-amber-600' : 'text-muted'}>
+        <span
+          className={alert ? undefined : 'text-muted'}
+          style={alert ? { color: 'var(--color-banner-warm-ink)' } : undefined}
+        >
           {alert ? '有事件通報' : '目前正常營運'}
         </span>
       </div>
@@ -52,6 +58,52 @@ export function TransitStatus({ line }: { line: string }) {
           {metro.arrivingNow.map((a) => `${a.station}（${a.heading}）`).join('、')}
         </p>
       )}
+    </div>
+  )
+}
+
+
+/*
+ * 精簡版，給行程頁的路線卡右下角用。
+ *
+ * 這裡原本寫死「路線正常」，不管實際狀況都這樣顯示 —— 對一個會在捷運出事時
+ * 建議你改叫車的 App 來說，那是最不該造假的一格。
+ *
+ * 跟完整版的差別只有版型：狀態判斷、快取、錯誤處理全都共用同一個 hook。
+ * 拿不到資料時顯示「狀態未知」而不是整塊消失，卡片版型才不會缺一角。
+ */
+export function TransitStatusBadge({ line }: { line: string }) {
+  const state = useMetroStatus(line)
+
+  const { dot, text, label } =
+    state.status === 'loading'
+      ? { dot: 'var(--color-subtle)', text: 'var(--color-subtle)', label: '查詢中' }
+      : state.status === 'error'
+        ? { dot: 'var(--color-line)', text: 'var(--color-subtle)', label: '狀態未知' }
+        : state.metro.status === 'alert'
+          ? {
+              dot: 'var(--color-banner-warm-ink)',
+              text: 'var(--color-banner-warm-ink)',
+              label: '有異常',
+            }
+          : { dot: 'var(--color-ink)', text: 'var(--color-success)', label: '路線正常' }
+
+  const background =
+    state.status === 'ready' && state.metro.status === 'alert'
+      ? 'var(--color-warning-tint)'
+      : state.status === 'ready'
+        ? 'var(--color-success-tint)'
+        : 'var(--color-surface-2)'
+
+  return (
+    <div className="rounded-xl px-3 pb-1.5 pt-1 text-center" style={{ background }}>
+      <span
+        className="mx-auto block h-2.5 w-2.5 rounded-full"
+        style={{ background: dot }}
+      />
+      <p className="mt-0.5 text-[12px] font-semibold" style={{ color: text }}>
+        {label}
+      </p>
     </div>
   )
 }

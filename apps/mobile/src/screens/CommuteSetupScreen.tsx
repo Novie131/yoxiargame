@@ -1,13 +1,30 @@
+import { useNavigate } from 'react-router'
+
 import { ChatComposer } from '@/components/ChatComposer'
 import { AssistantMessage, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
 import { TransitStatus } from '@/components/TransitStatus'
 import { TransportCard } from '@/components/TransportCard'
 import { ClockIcon, PinIcon } from '@/components/icons'
+import { setCommuteRoute } from '@/lib/commute'
 
 /* 對應設計稿 frame：首頁 Agent_通勤路線設定 */
 
+/*
+ * 這條路線的內容目前還是照設計稿寫死的（對話也是排好的腳本）。
+ * 但按下 CTA 會真的存進 lib/commute 的 store，行程頁才走得出空狀態。
+ * 之後改成讓使用者自己輸入起訖站時，換掉這個常數即可。
+ */
+const ROUTE = {
+  origin: '板橋站',
+  destination: '市政府站',
+  line: '板南線',
+  durationMinutes: 25,
+}
+
 export function CommuteSetupScreen() {
+  const navigate = useNavigate()
+
   return (
     <div className="flex h-full flex-col">
       <HomeHeader
@@ -31,6 +48,10 @@ export function CommuteSetupScreen() {
             badgeIcon={<span className="text-[12px]">⭐</span>}
             title="板橋 → 市政府站 (8.5 km)"
             cta="確認設定通勤路線"
+            onCta={() => {
+              setCommuteRoute(ROUTE)
+              navigate('/trips')
+            }}
           >
             <div className="flex items-center gap-4 text-[13px] text-muted">
               <span className="flex items-center gap-1">
