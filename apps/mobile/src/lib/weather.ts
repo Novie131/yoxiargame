@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { API_URL } from './api'
+import { locate } from './location'
 
 /*
  * 首頁標題列的即時天氣。
@@ -8,8 +9,8 @@ import { API_URL } from './api'
  * 流程是：瀏覽器定位 → 呼叫自家 /weather → 後端代打 Open-Meteo 與反向地理編碼。
  * 不直接從瀏覽器打第三方，CORS 與之後換資料來源都由後端吸收。
  *
- * 定位被拒或逾時就退回台北市中心的座標，並標記 precise=false，
- * 畫面上要讓使用者知道那不是他真正的所在地。
+ * 定位交給 lib/location（探索地圖也用同一份），被拒或逾時會退回台北市信義區，
+ * 並標記 precise=false —— 畫面上要讓使用者知道那不是他真正的所在地。
  */
 
 export type Weather = {
@@ -33,11 +34,7 @@ export type WeatherState =
   | { status: 'ready'; weather: Weather; precise: boolean }
   | { status: 'error'; message: string }
 
-/* 台北市中心。定位拿不到時的退路。 */
-const FALLBACK = { lat: 25.0375, lon: 121.5637 }
-
 const TTL_MS = 10 * 60 * 1000
-const GEO_TIMEOUT_MS = 8000
 
 type Snapshot = { at: number; weather: Weather; precise: boolean }
 
@@ -46,19 +43,6 @@ let inflight: Promise<Snapshot> | null = null
 
 function fresh(s: Snapshot | null): s is Snapshot {
   return s !== null && Date.now() - s.at < TTL_MS
-}
-
-function locate(): Promise<{ lat: number; lon: number; precise: boolean }> {
-  if (!('geolocation' in navigator)) return Promise.resolve({ ...FALLBACK, precise: false })
-
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, precise: true }),
-      /* 被拒絕、逾時、定位失敗，一律走退路，不要讓首頁卡在載入中 */
-      () => resolve({ ...FALLBACK, precise: false }),
-      { timeout: GEO_TIMEOUT_MS, maximumAge: TTL_MS },
-    )
-  })
 }
 
 async function load(): Promise<Snapshot> {

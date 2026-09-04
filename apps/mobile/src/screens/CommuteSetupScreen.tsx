@@ -45,10 +45,29 @@ const INTRO =
 /* 放在模組層，切到別的分頁再回來時對話不會消失 */
 const conversation = createConversation(INTRO)
 
-const MODES: Array<{ value: TransportMode; label: string }> = [
-  { value: 'metro', label: '捷運' },
-  { value: 'bus', label: '公車' },
-  { value: 'mixed', label: '混合' },
+/*
+ * 運具。
+ *
+ * 火車與高鐵是為了之後的跨縣市通勤預留的，先呈現按鈕、還不能選：
+ * TDX 有台鐵（TRA）與高鐵（THSR）的資料，但這裡的路線推導、即時狀態、
+ * 事件監看目前全都只認台北捷運，選了也不會有任何作用。
+ *
+ * 刻意做成「看得到但按不下去」而不是直接能選 —— 讓使用者存下一條
+ * 系統根本盯不住的路線，比先不給更糟：他會以為誤點時有人會通知他。
+ */
+type ModeOption = {
+  value: TransportMode | 'train' | 'hsr'
+  label: string
+  /** false 代表只是預告，還不能選 */
+  available: boolean
+}
+
+const MODES: ModeOption[] = [
+  { value: 'metro', label: '捷運', available: true },
+  { value: 'bus', label: '公車', available: true },
+  { value: 'mixed', label: '混合', available: true },
+  { value: 'train', label: '火車', available: false },
+  { value: 'hsr', label: '高鐵', available: false },
 ]
 
 /* 預設時段。涵蓋一般的上下班往返，同時把深夜擋在外面。 */
@@ -188,24 +207,35 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
 
       <div className="mt-3">
         <span className="text-[12px] text-subtle">主要運具</span>
-        <div className="mt-1 flex gap-2">
-          {MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              onClick={() => setMode(m.value)}
-              aria-pressed={mode === m.value}
-              className={[
-                'flex-1 rounded-xl py-2.5 text-[14px] font-semibold transition-colors',
-                mode === m.value
-                  ? 'bg-primary text-white'
-                  : 'bg-surface-3 text-muted',
-              ].join(' ')}
-            >
-              {m.label}
-            </button>
-          ))}
+        {/* 五個選項排一列在手機上太窄，改成三欄 */}
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {MODES.map((m) => {
+            const selected = m.available && mode === m.value
+
+            return (
+              <button
+                key={m.value}
+                type="button"
+                disabled={!m.available}
+                onClick={() => m.available && setMode(m.value as TransportMode)}
+                aria-pressed={selected}
+                className={[
+                  'relative rounded-xl py-2.5 text-[14px] font-semibold transition-colors',
+                  selected ? 'bg-primary text-white' : 'bg-surface-3 text-muted',
+                  m.available ? '' : 'opacity-50',
+                ].join(' ')}
+              >
+                {m.label}
+                {!m.available && (
+                  <span className="ml-1 align-middle text-[10px] font-medium">規劃中</span>
+                )}
+              </button>
+            )
+          })}
         </div>
+        <p className="mt-1.5 text-[11px] text-subtle">
+          火車與高鐵為跨縣市通勤預留，路線規劃與誤點通知尚未支援。
+        </p>
       </div>
 
       <div className="mt-4 border-t border-black/[.07] pt-3">
