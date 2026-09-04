@@ -1,30 +1,26 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 
-import { hasDatabase } from '../db/client.ts'
-import { saveCommuteRoute } from '../db/repositories/commute.ts'
-import {
-  getBusStatus,
-  getMetroStatus,
-  hasTdxCredentials,
-  isBusCity,
-} from '../services/tdx.ts'
+import { readRoute, saveRoute } from '../services/commute.ts'
+import { getBusStatus, getMetroStatus, hasTdxCredentials, isBusCity } from '../services/tdx.ts'
 import { geocodeDistrict, getWeather } from '../services/weather.ts'
 
 /*
  * Agent 可用的工具。
  *
- * save_commute_route 已接上真實資料庫，get_weather 已接上即時天氣，
- * get_transit_status 的捷運與公車都已接上 TDX；其餘仍回假資料，
- * 數值刻意對齊 Document/ 的設計稿，之後接真實來源時只要換掉 execute 的內容。
+ * 通勤路線、天氣、捷運與公車即時狀態都已接上真實來源；
+ * estimate_ride 與 search_activities 仍回假資料，數值刻意對齊 Document/ 的設計稿，
+ * 之後接真實來源時只要換掉 execute 的內容。
  *
- * 待辦：目前沒有身分驗證，使用者一律記為 DEV_USER_REF。
- * 接上登入後應改由請求帶入。
+ * 工具分兩類：
+ *   sharedTools  跟使用者無關，模組層定義一次即可
+ *   createTools  綁定單一使用者的工具（讀寫通勤路線），每次請求建立
+ *
+ * 之所以要分開：通勤路線必須寫在發話者身上。在有 createTools 之前，
+ * 所有人都被記成同一個 'dev-user'，等於共用一條路線。
  */
 
-const DEV_USER_REF = 'dev-user'
-
-export const tools = {
+const sharedTools = {
   get_weather: tool({
     description: '查詢指定行政區目前的天氣、氣溫、紫外線指數與降雨。',
     inputSchema: z.object({
@@ -169,42 +165,83 @@ export const tools = {
       ],
     }),
   }),
+}
 
-  save_commute_route: tool({
-    description: '儲存使用者的常用通勤路線，之後路線有異常時可主動通知。',
-    inputSchema: z.object({
-      origin: z.string().describe('出發地，例如「板橋站」'),
-      destination: z.string().describe('目的地，例如「市政府站」'),
-      mode: z.enum(['metro', 'bus', 'mixed']).describe('主要運具'),
-    }),
-    execute: async ({ origin, destination, mode }) => {
-      // 沒有設定 DATABASE_URL 時（例如純 demo 部署）回傳模擬結果，
-      // 讓對話流程完整，只是資料不會真的留下。
-      if (!hasDatabase()) {
-        return {
-          saved: true,
-          persisted: false,
-          origin,
-          destination,
-          mode,
-          notification_enabled: true,
+/**
+ * 綁定單一使用者的工具集。每次請求呼叫一次，userRef 來自 identity.readUserRef。
+ */
+export function createTools(userRef: string) {
+  return {
+    ...sharedTools,
+
+    save_commute_route: tool({
+      description:
+        '儲存使用者的常用通勤路線，之後路線有異常時可主動通知。' +
+        '使用者描述自己每天怎麼上班（例如「我從板橋搭捷運到市政府」）時就呼叫。',
+      inputSchema: z.object({
+        origin: z.string().describe('出發地，例如「板橋站」'),
+        destination: z.string().describe('目的地，例如「市政府站」'),
+        mode: z.enum(['metro', 'bus', 'mixed']).describe('主要運具'),
+        line: z
+          .string()
+          .optional()
+          .describe(
+            '路線名。使用者有明講才帶（捷運「板南線」、公車「307」）；' +
+              '沒明講就不要帶，系統會自己從起訖站推出來。',
+          ),
+      }),
+      execute: async ({ origin, destination, mode, line }) => {
+        try {
+          const { route, transferRequired, persisted } = await saveRoute({
+            userRef,
+            origin,
+            destination,
+            mode,
+            line,
+          })
+          return {
+            saved: true,
+            persisted,
+            /* 這個 route 會被 agent/index.ts 轉成串流事件，讓前端即時更新畫面 */
+            route: {
+              origin: route.origin,
+              destination: route.destination,
+              mode: route.mode,
+              line: route.line,
+            },
+            transfer_required: transferRequired,
+            notification_enabled: route.notificationEnabled,
+          }
+        } catch (error) {
+          console.error('[save_commute_route]', error)
+          return { saved: false, error: '儲存通勤路線失敗，請稍後再試' }
         }
-      }
+      },
+    }),
 
-      const saved = await saveCommuteRoute({
-        externalUserRef: DEV_USER_REF,
-        origin,
-        destination,
-        mode,
-      })
-      return {
-        saved: true,
-        persisted: true,
-        origin: saved.origin,
-        destination: saved.destination,
-        mode: saved.mode,
-        notification_enabled: saved.notificationEnabled,
-      }
-    },
-  }),
+    get_commute_route: tool({
+      description:
+        '查詢使用者已儲存的通勤路線。使用者問「我的通勤路線是什麼」或要修改路線前先確認時使用。',
+      inputSchema: z.object({}),
+      execute: async () => {
+        try {
+          const route = await readRoute(userRef)
+          return route
+            ? {
+                configured: true,
+                route: {
+                  origin: route.origin,
+                  destination: route.destination,
+                  mode: route.mode,
+                  line: route.line,
+                },
+              }
+            : { configured: false, route: null }
+        } catch (error) {
+          console.error('[get_commute_route]', error)
+          return { configured: false, route: null, error: '讀取通勤路線失敗' }
+        }
+      },
+    }),
+  }
 }

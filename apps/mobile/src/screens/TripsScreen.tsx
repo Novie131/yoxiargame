@@ -2,41 +2,73 @@ import { useNavigate } from 'react-router'
 
 import { TransitStatusBadge } from '@/components/TransitStatus'
 import { BellIcon } from '@/components/icons'
-import { useCommuteRoute, type CommuteRoute } from '@/lib/commute'
+import { metroLineOf, useCommuteRoute, type CommuteRoute } from '@/lib/commute'
 import { formatDateWithWeekday, greeting } from '@/lib/datetime'
 import { useMember } from '@/lib/member'
+import { useMetroStatus } from '@/lib/transit'
 
 /*
  * 對應設計稿 frame：行程 – 常用路線
  *
  * 設計稿畫的是「已經用了一段時間」的狀態：有常用路線、有 29 則通知、
- * 有下一段行程。新使用者看到那些會很錯亂 —— 那不是他設的路線。
- * 所以跟通勤有關的三塊（下一段、常用路線、通勤提醒）都改成
- * 只有設定過路線才顯示，沒設定就給空狀態與設定入口。
+ * 有下一段行程、寫著「建議 08:05 出發・預計 08:32 抵達」。
+ * 新使用者看到那些會很錯亂 —— 那不是他設的路線，那些時間也不是算出來的。
+ * 所以跟通勤有關的區塊都改成只有設定過路線才顯示，而且只顯示真的有來源的東西：
  *
- * 通知數字同理：目前那些通知全都是通勤相關的，沒有路線就不會有通知。
+ *   起訖站      使用者自己設定的
+ *   路線即時狀態 TDX
+ *   出發時間、抵達時間、未讀通知數  還沒有來源，先不顯示
+ *
+ * 出發時間要能算，需要路徑規劃（TDX 沒有旅行時間）；通知數要能算，
+ * 需要先有通知這個功能。兩者都做好之前，寧可留白也不要放假數字。
  */
+
+const MODE_LABEL: Record<CommuteRoute['mode'], string> = {
+  metro: '捷運',
+  bus: '公車',
+  mixed: '捷運＋公車',
+}
+
+/* 深色卡上的即時狀態。跟白卡的 TransitStatusBadge 共用同一個 hook 與快取，只是配色不同。 */
+function DarkStatusLine({ line }: { line: string }) {
+  const state = useMetroStatus(line)
+
+  if (state.status === 'loading') {
+    return <p className="mt-3 text-[13px] text-white/70">查詢 {line} 即時狀態…</p>
+  }
+  if (state.status === 'error') {
+    return <p className="mt-3 text-[13px] text-white/70">{line}・目前取不到路況</p>
+  }
+
+  const { metro } = state
+  return (
+    <p className="mt-3 text-[13px] text-white/85">
+      <span className="mr-1.5">🚇</span>
+      {metro.line}・{metro.status === 'alert' ? metro.note : '目前無營運事件通報'}
+    </p>
+  )
+}
 
 /* 已設定路線時，才有「下一段行程」可言 */
 function NextLegCard({ route }: { route: CommuteRoute }) {
   const { displayName } = useMember()
+  const line = metroLineOf(route)
 
   return (
     <div className="rounded-2xl bg-ink px-5 py-4 text-white">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[13px] text-white/70">
-            {greeting()}，{displayName}
-          </p>
-          <h2 className="mt-1 text-[20px] font-bold">下一段：前往{route.destination}</h2>
-        </div>
-        <span className="shrink-0 rounded-full bg-success px-4 py-2 text-[14px] font-semibold">
-          準時
-        </span>
-      </div>
-      <p className="mt-3 text-[13px] text-white/85">
-        <span className="mr-1.5">⏰</span>建議 08:05 出發・預計 08:32 抵達
+      <p className="text-[13px] text-white/70">
+        {greeting()}，{displayName}
       </p>
+      <h2 className="mt-1 text-[20px] font-bold">下一段：前往{route.destination}</h2>
+
+      {line ? (
+        <DarkStatusLine line={line} />
+      ) : (
+        <p className="mt-3 text-[13px] text-white/85">
+          <span className="mr-1.5">🚌</span>
+          {route.line ?? MODE_LABEL[route.mode]}・路況有異常時會通知您
+        </p>
+      )}
     </div>
   )
 }
@@ -50,7 +82,7 @@ function WelcomeCard() {
       <p className="text-[13px] text-white/70">{greeting()}，{displayName}</p>
       <h2 className="mt-1 text-[20px] font-bold">還沒有安排行程</h2>
       <p className="mt-3 text-[13px] text-white/85">
-        設定一條常用路線，之後這裡會顯示出發時間與路況提醒。
+        設定一條常用路線，之後這裡會顯示路況提醒。
       </p>
     </div>
   )
@@ -98,7 +130,9 @@ function EmptyRouteCard({ onSetup }: { onSetup: () => void }) {
   )
 }
 
-function FrequentRouteCard({ route }: { route: CommuteRoute }) {
+function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () => void }) {
+  const line = metroLineOf(route)
+
   return (
     <div className="rounded-2xl bg-surface p-4 shadow-[0_2px_12px_rgba(22,32,55,.06)]">
       <div className="flex items-start justify-between">
@@ -123,17 +157,18 @@ function FrequentRouteCard({ route }: { route: CommuteRoute }) {
       <div className="mt-4 flex items-end justify-between border-t border-black/[.07] pt-3.5">
         <p className="text-[13px] text-muted">
           <span className="mr-1.5">🚇</span>
-          {route.line ? `${route.line}・` : ''}約 {route.durationMinutes} 分鐘
+          {route.line ?? MODE_LABEL[route.mode]}
         </p>
-        {/* 路線名是空的就沒得查（例如公車路線還沒填 line），那就不顯示狀態 */}
-        {route.line ? <TransitStatusBadge line={route.line} /> : null}
+        {/* 沒有可查的捷運路線名就不顯示狀態，理由見 metroLineOf */}
+        {line ? <TransitStatusBadge line={line} /> : null}
       </div>
 
       <button
         type="button"
+        onClick={onEdit}
         className="mt-4 w-full rounded-xl bg-primary py-3.5 text-[16px] font-semibold text-white transition-transform active:scale-[.98]"
       >
-        查看路線
+        修改路線
       </button>
     </div>
   )
@@ -142,6 +177,7 @@ function FrequentRouteCard({ route }: { route: CommuteRoute }) {
 export function TripsScreen() {
   const navigate = useNavigate()
   const { route, configured } = useCommuteRoute()
+  const setup = () => navigate('/commute-setup')
 
   return (
     <div className="min-h-full bg-surface-2">
@@ -152,14 +188,9 @@ export function TripsScreen() {
               但日期應該跟著今天走，不能寫死 */}
           <p className="mt-1 text-[13px] text-muted">{formatDateWithWeekday()}</p>
         </div>
-        <button type="button" aria-label="通知" className="relative pt-1.5">
+        {/* 未讀數字先拿掉：通知功能還沒做，掛一個數字上去只是裝飾 */}
+        <button type="button" aria-label="通知" className="pt-1.5">
           <BellIcon />
-          {/* 通知目前全都來自通勤路線，沒設定路線就不會有未讀 */}
-          {configured && (
-            <span className="absolute -right-1.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
-              29
-            </span>
-          )}
         </button>
       </header>
 
@@ -169,16 +200,20 @@ export function TripsScreen() {
         <div className="flex items-baseline justify-between px-1">
           <h2 className="text-[18px] font-bold">常用路線</h2>
           {configured && (
-            <button type="button" className="text-[13px] font-medium text-primary">
+            <button
+              type="button"
+              onClick={setup}
+              className="text-[13px] font-medium text-primary"
+            >
               管理
             </button>
           )}
         </div>
 
         {route ? (
-          <FrequentRouteCard route={route} />
+          <FrequentRouteCard route={route} onEdit={setup} />
         ) : (
-          <EmptyRouteCard onSetup={() => navigate('/commute-setup')} />
+          <EmptyRouteCard onSetup={setup} />
         )}
 
         {configured && (

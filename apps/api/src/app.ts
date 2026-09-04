@@ -4,7 +4,16 @@ import { cors } from 'hono/cors'
 import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
-import { getBusStatus, getMetroStatus, hasTdxCredentials, isBusCity } from './services/tdx.ts'
+import type { TransportMode } from './db/repositories/commute.ts'
+import { readUserRef } from './identity.ts'
+import { clearRoute, readRoute, saveRoute } from './services/commute.ts'
+import {
+  getBusStatus,
+  getMetroStatus,
+  hasTdxCredentials,
+  isBusCity,
+  searchMetroStations,
+} from './services/tdx.ts'
 import { getWeather } from './services/weather.ts'
 
 /*
@@ -27,8 +36,9 @@ app.use('/*', (c, next) => {
 
   return cors({
     origin: configured.length ? configured : '*',
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type'],
+    allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    /* X-User-Ref 是前端帶的裝置識別，見 identity.ts —— 不是身分驗證 */
+    allowHeaders: ['Content-Type', 'X-User-Ref'],
     maxAge: 86400,
   })(c, next)
 })
@@ -132,7 +142,126 @@ app.get('/transit/bus', async (c) => {
   }
 })
 
+/*
+ * 捷運站名建議。設定通勤路線時前端邊打邊查，讓使用者選的是真的存在的站 ——
+ * 站名要對得上 TDX，之後查即時狀態與推導路線名才有意義。
+ *
+ * 站表是靜態資料，服務端快取一天，這裡也讓用戶端快取久一點。
+ */
+app.get('/transit/stations', async (c) => {
+  const q = c.req.query('q')?.trim() ?? ''
+  if (!q) return c.json({ stations: [] })
+  if (!hasTdxCredentials()) return c.json({ error: 'TDX 金鑰未設定' }, 503)
+
+  try {
+    const stations = await searchMetroStations(q)
+    c.header('Cache-Control', 'public, max-age=3600')
+    return c.json({ stations })
+  } catch (error) {
+    console.error('[transit/stations]', error)
+    return c.json({ error: '站點資料暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 通勤路線。
+ *
+ * 使用者由 X-User-Ref 標頭識別（identity.ts，不是身分驗證）。
+ * 對話裡的 save_commute_route 工具走的是同一層 services/commute.ts，
+ * 所以用講的跟用表單設定，存出來的是同一筆資料。
+ */
+
+const MODES: TransportMode[] = ['metro', 'bus', 'mixed']
+
+/* 站名長度上限。純粹是防止把任意長字串寫進資料庫，不是業務規則。 */
+const MAX_NAME_LENGTH = 60
+
+type ParsedRoute = { origin: string; destination: string; mode: TransportMode; line: string | null }
+
+function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok: false; error: string } {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, error: '請求內容格式錯誤' }
+  }
+
+  const { origin, destination, mode, line } = body as Record<string, unknown>
+
+  if (typeof origin !== 'string' || !origin.trim()) {
+    return { ok: false, error: 'origin 是必填' }
+  }
+  if (typeof destination !== 'string' || !destination.trim()) {
+    return { ok: false, error: 'destination 是必填' }
+  }
+  if (origin.trim().length > MAX_NAME_LENGTH || destination.trim().length > MAX_NAME_LENGTH) {
+    return { ok: false, error: `站名不能超過 ${MAX_NAME_LENGTH} 個字` }
+  }
+  if (typeof mode !== 'string' || !MODES.includes(mode as TransportMode)) {
+    return { ok: false, error: `mode 必須是 ${MODES.join('、')} 其中之一` }
+  }
+
+  return {
+    ok: true,
+    value: {
+      origin: origin.trim(),
+      destination: destination.trim(),
+      mode: mode as TransportMode,
+      /* 沒給就讓 service 從起訖站推，不要在這裡填預設值 */
+      line: typeof line === 'string' && line.trim() ? line.trim() : null,
+    },
+  }
+}
+
+app.get('/commute/route', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  try {
+    const route = await readRoute(userRef)
+    /* 每個使用者的資料都不一樣，不能讓中間層快取 */
+    c.header('Cache-Control', 'private, no-store')
+    return c.json({ route })
+  } catch (error) {
+    console.error('[commute/route:get]', error)
+    return c.json({ error: '讀取通勤路線失敗' }, 502)
+  }
+})
+
+app.post('/commute/route', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: '請求內容不是合法的 JSON' }, 400)
+  }
+
+  const parsed = parseRouteBody(body)
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+
+  try {
+    const { route, transferRequired, persisted } = await saveRoute({ userRef, ...parsed.value })
+    c.header('Cache-Control', 'private, no-store')
+    return c.json({ route, transferRequired, persisted })
+  } catch (error) {
+    console.error('[commute/route:post]', error)
+    return c.json({ error: '儲存通勤路線失敗' }, 502)
+  }
+})
+
+app.delete('/commute/route', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  try {
+    await clearRoute(userRef)
+    return c.body(null, 204)
+  } catch (error) {
+    console.error('[commute/route:delete]', error)
+    return c.json({ error: '刪除通勤路線失敗' }, 502)
+  }
+})
+
 app.post('/agent/chat', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
   let body: { messages?: unknown }
   try {
     body = await c.req.json()
@@ -145,18 +274,27 @@ app.post('/agent/chat', async (c) => {
 
   const messages: ChatMessage[] = result.messages
 
-  // 純文字串流，前端直接讀 response.body 即可，不用實作額外協定
+  /*
+   * NDJSON：一行一個 JSON 事件。
+   *
+   * 原本是純文字串流，但那樣前端只看得到字 —— 模型呼叫 save_commute_route
+   * 把路線存好了，畫面卻不知道，要重開 App 才會更新。改成事件流之後，
+   * 文字是 {"type":"text"}，狀態改變是 {"type":"commute_route"}。
+   * 用換行分隔是安全的：JSON.stringify 會把內容裡的換行跳脫掉。
+   */
   const encoder = new TextEncoder()
+  const line = (event: unknown) => encoder.encode(`${JSON.stringify(event)}\n`)
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const chunk of streamAgentReplyWithFallback(messages)) {
-          controller.enqueue(encoder.encode(chunk))
+        for await (const event of streamAgentReplyWithFallback(messages, userRef)) {
+          controller.enqueue(line(event))
         }
       } catch (error) {
         // 只記錄在伺服器端，不把內部訊息回給前端
         console.error('[agent/chat]', error)
-        controller.enqueue(encoder.encode('\n\n[發生錯誤，請稍後再試]'))
+        controller.enqueue(line({ type: 'error', message: '發生錯誤，請稍後再試' }))
       } finally {
         controller.close()
       }
@@ -165,7 +303,7 @@ app.post('/agent/chat', async (c) => {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
       'Cache-Control': 'no-store',
     },
   })

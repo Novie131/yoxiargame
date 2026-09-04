@@ -11,7 +11,11 @@ const groups = [
     items: [
       { to: '/', label: '活動示意', file: '初步確定方向/agent-home-activity.png' },
       { to: '/interests', label: '興趣調查', file: '初步確定方向/agent-home-interests.png' },
-      { to: '/commute-setup', label: '通勤路線設定', file: '初步確定方向/agent-home-commute-setup.png' },
+      {
+        to: '/commute-setup',
+        label: '通勤路線設定',
+        file: '初步確定方向/agent-home-commute-setup.png（已改為真實流程，非還原稿）',
+      },
     ],
   },
   {

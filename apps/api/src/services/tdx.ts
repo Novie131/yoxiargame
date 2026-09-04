@@ -285,6 +285,150 @@ export async function getMetroStatus(lineQuery: string): Promise<MetroStatus | n
   }
 }
 
+/* ── 捷運站點 ── */
+
+/*
+ * 站點清單用來做兩件事：設定通勤路線時的站名建議，以及由起訖站反推所屬路線。
+ *
+ * 反推路線是必要的，因為畫面上的即時狀態徽章要有 line 才查得動，
+ * 而使用者只會講「板橋到市政府」，不會講「板南線」。
+ *
+ * StationOfLine 是幾乎不變的靜態資料，TTL 跟路線清單一樣拉到一天，
+ * 才不會吃掉每分鐘只有 5 次的額度。
+ */
+
+type MetroStationOfLine = {
+  LineID: string
+  Stations: Array<{
+    Sequence: number
+    StationID: string
+    StationName: { Zh_tw: string; En: string }
+  }>
+}
+
+function getStationOfLine() {
+  return get<MetroStationOfLine[]>(
+    `v2/Rail/Metro/StationOfLine/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+export type MetroStation = {
+  stationId: string
+  name: string
+  /** 這一站經過的所有路線名。轉乘站會有多條，例如台北車站有淡水信義線與板南線。 */
+  lines: string[]
+}
+
+/* 「板橋」「板橋站」「 板橋 」要視為同一站 */
+function normalizeStationName(value: string): string {
+  return value.trim().replace(/\s+/g, '').replace(/站$/, '').toLowerCase()
+}
+
+/* 依站名彙整的索引。同一站出現在多條路線時合併成一筆，lines 累積。 */
+async function stationIndex(): Promise<MetroStation[]> {
+  const [lines, stationOfLine] = await Promise.all([getLines(), getStationOfLine()])
+  const lineNameById = new Map(lines.map((l) => [l.LineID, l.LineName.Zh_tw]))
+
+  const byId = new Map<string, MetroStation>()
+  for (const group of stationOfLine) {
+    const lineName = lineNameById.get(group.LineID)
+    if (!lineName) continue
+
+    for (const s of group.Stations) {
+      const existing = byId.get(s.StationID)
+      if (existing) {
+        if (!existing.lines.includes(lineName)) existing.lines.push(lineName)
+      } else {
+        byId.set(s.StationID, {
+          stationId: s.StationID,
+          name: s.StationName.Zh_tw,
+          lines: [lineName],
+        })
+      }
+    }
+  }
+  return [...byId.values()]
+}
+
+/**
+ * 站名建議。前綴相符排在包含相符之前，讓打「板」時「板橋」優先於「南港軟體園區」。
+ * 空字串回傳空陣列，不要把整份站表倒給前端。
+ */
+export async function searchMetroStations(query: string, limit = 8): Promise<MetroStation[]> {
+  const q = normalizeStationName(query)
+  if (!q) return []
+
+  const stations = await stationIndex()
+  const prefix: MetroStation[] = []
+  const contains: MetroStation[] = []
+
+  for (const s of stations) {
+    const name = normalizeStationName(s.name)
+    if (name.startsWith(q)) prefix.push(s)
+    else if (name.includes(q)) contains.push(s)
+  }
+
+  return [...prefix, ...contains].slice(0, limit)
+}
+
+/** 站名 → 站點。對不到時回 null（可能是公車站或打錯字）。 */
+export async function findMetroStation(name: string): Promise<MetroStation | null> {
+  const q = normalizeStationName(name)
+  if (!q) return null
+  const stations = await stationIndex()
+  return stations.find((s) => normalizeStationName(s.name) === q) ?? null
+}
+
+export type CommuteLineResolution = {
+  /** 查不出來時為 null —— 呼叫端要照實處理，不要塞一條猜的路線 */
+  line: string | null
+  /** 起訖站沒有共同路線，代表中途要轉乘 */
+  transferRequired: boolean
+  /*
+   * 對得上站表時的正式站名。
+   *
+   * 需要它是因為同一站會有好幾種寫法：表單送「古亭」，模型送「古亭站」。
+   * 不統一的話，用講的跟用填的會存出兩筆看起來不一樣的資料。
+   * 對不上時維持呼叫端傳進來的原字串（可能是公車站或打錯字）。
+   */
+  originName: string
+  destinationName: string
+}
+
+/**
+ * 由起訖站推出這條通勤路線的主要路線名。
+ *
+ * 兩站有共同路線就用那條；沒有共同路線（要轉乘）時回傳起點所在的第一條，
+ * 因為那是使用者實際上車的那條線，即時狀態要盯的也是它。
+ */
+export async function resolveCommuteLine(
+  origin: string,
+  destination: string,
+): Promise<CommuteLineResolution> {
+  const [from, to] = await Promise.all([
+    findMetroStation(origin),
+    findMetroStation(destination),
+  ])
+
+  if (!from || !to) {
+    return {
+      line: from?.lines[0] ?? null,
+      transferRequired: false,
+      originName: from?.name ?? origin,
+      destinationName: to?.name ?? destination,
+    }
+  }
+
+  const shared = from.lines.find((l) => to.lines.includes(l))
+  return {
+    line: shared ?? from.lines[0] ?? null,
+    transferRequired: shared === undefined,
+    originName: from.name,
+    destinationName: to.name,
+  }
+}
+
 /* ── 公車 ── */
 
 /*
