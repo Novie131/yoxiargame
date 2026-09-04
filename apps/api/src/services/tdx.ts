@@ -285,6 +285,45 @@ export async function getMetroStatus(lineQuery: string): Promise<MetroStatus | n
   }
 }
 
+/*
+ * 全網事件清單。
+ *
+ * 給主動通知的輪詢用。跟 getMetroStatus 的差別是「一次撈全部」而不是「查一條線」——
+ * TDX 的額度是每分鐘 5 次，如果每個使用者的路線各查一次，幾十個使用者就爆了。
+ * Alert 這支本來回的就是全網事件，撈一次、在自己的資料庫裡分派給對應的使用者，
+ * 成本跟使用者數量無關。
+ */
+export type MetroIncident = {
+  /** TDX 的 AlertID。拿來當去重鍵，同一起事件不要通知同一個人兩次。 */
+  eventId: string
+  title: string
+  description: string
+  /** 受影響的路線。空陣列代表 TDX 沒有指定範圍，視為全網通用。 */
+  lines: Array<{ lineId: string; lineName: string }>
+  publishedAt: string
+  updatedAt: string
+}
+
+export async function listMetroIncidents(): Promise<MetroIncident[]> {
+  const [alertData, lines] = await Promise.all([getAlerts(), getLines()])
+  const nameById = new Map(lines.map((l) => [l.LineID, l.LineName.Zh_tw]))
+
+  return (alertData.Alerts ?? []).filter(isRealIncident).map((a) => ({
+    eventId: a.AlertID,
+    title: a.Title,
+    description: a.Description,
+    lines: (a.Scope?.Lines ?? [])
+      .map((l) => ({
+        lineId: l.LineID ?? '',
+        /* Scope 裡的 LineName 有時是空的，用官方路線表補 */
+        lineName: l.LineName || (l.LineID ? (nameById.get(l.LineID) ?? '') : ''),
+      }))
+      .filter((l) => l.lineId || l.lineName),
+    publishedAt: a.PublishTime,
+    updatedAt: a.UpdateTime,
+  }))
+}
+
 /* ── 捷運站點 ── */
 
 /*

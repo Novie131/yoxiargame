@@ -7,6 +7,7 @@ import { CommuteSetupScreen } from '@/screens/CommuteSetupScreen'
 import { DevIndexScreen } from '@/screens/DevIndexScreen'
 import { ExploreScreen } from '@/screens/ExploreScreen'
 import { MemberScreen } from '@/screens/MemberScreen'
+import { NotificationsScreen } from '@/screens/NotificationsScreen'
 import { SettingsScreen } from '@/screens/SettingsScreen'
 import { BookingScreen } from '@/screens/ride/BookingScreen'
 import { DriverArrivingScreen } from '@/screens/ride/DriverArrivingScreen'
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/rainy" element={<RainyCommuteScreen />} />
         <Route path="/uv" element={<UvAlertScreen />} />
         <Route path="/trips" element={<TripsScreen />} />
+        <Route path="/notifications" element={<NotificationsScreen />} />
         <Route path="/explore" element={<ExploreScreen />} />
         <Route path="/settings" element={<SettingsScreen />} />
         <Route path="/member" element={<MemberScreen />} />

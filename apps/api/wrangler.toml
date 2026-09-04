@@ -16,6 +16,16 @@ compatibility_date = "2026-09-01"
 # 讓 Workers 支援 process.env 與部分 Node API，程式碼才能與本機版一致
 compatibility_flags = ["nodejs_compat"]
 
+# 交通監看的排程。每 2 分鐘一輪，對應 src/worker.ts 的 scheduled()。
+#
+# 間隔刻意不小於 services/tdx.ts 的事件快取 TTL（60 秒）—— 那樣輪詢會命中
+# 使用者請求也在用的快取，不會額外吃掉 TDX 每分鐘 5 次的額度。
+#
+# 注意：Workers 上的資料庫連線還沒接（pg 需要 TCP），所以這個排程目前會 no-op。
+# 詳見 src/worker.ts 的 scheduled() 註解。
+[triggers]
+crons = ["*/2 * * * *"]
+
 [observability]
 enabled = true
 

@@ -5,6 +5,7 @@ import { BellIcon } from '@/components/icons'
 import { metroLineOf, useCommuteRoute, type CommuteRoute } from '@/lib/commute'
 import { formatDateWithWeekday, greeting } from '@/lib/datetime'
 import { useMember } from '@/lib/member'
+import { useNotifications } from '@/lib/notifications'
 import { useMetroStatus } from '@/lib/transit'
 
 /*
@@ -17,10 +18,11 @@ import { useMetroStatus } from '@/lib/transit'
  *
  *   起訖站      使用者自己設定的
  *   路線即時狀態 TDX
- *   出發時間、抵達時間、未讀通知數  還沒有來源，先不顯示
+ *   未讀通知數   後端的交通監看實際產生的通知
+ *   出發時間、抵達時間  還沒有來源，先不顯示
  *
- * 出發時間要能算，需要路徑規劃（TDX 沒有旅行時間）；通知數要能算，
- * 需要先有通知這個功能。兩者都做好之前，寧可留白也不要放假數字。
+ * 出發時間要能算，需要路徑規劃（TDX 沒有旅行時間）。在那之前寧可留白，
+ * 也不要放一個看起來很具體、其實是編的時間。
  */
 
 const MODE_LABEL: Record<CommuteRoute['mode'], string> = {
@@ -177,6 +179,7 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
 export function TripsScreen() {
   const navigate = useNavigate()
   const { route, configured } = useCommuteRoute()
+  const { unreadCount } = useNotifications()
   const setup = () => navigate('/commute-setup')
 
   return (
@@ -188,9 +191,19 @@ export function TripsScreen() {
               但日期應該跟著今天走，不能寫死 */}
           <p className="mt-1 text-[13px] text-muted">{formatDateWithWeekday()}</p>
         </div>
-        {/* 未讀數字先拿掉：通知功能還沒做，掛一個數字上去只是裝飾 */}
-        <button type="button" aria-label="通知" className="pt-1.5">
+        <button
+          type="button"
+          aria-label={unreadCount > 0 ? `通知，${unreadCount} 則未讀` : '通知'}
+          onClick={() => navigate('/notifications')}
+          className="relative pt-1.5"
+        >
           <BellIcon />
+          {/* 這個數字現在是真的：後端監看到的、與這個人路線相關的未讀事件 */}
+          {unreadCount > 0 && (
+            <span className="absolute -right-1.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </button>
       </header>
 

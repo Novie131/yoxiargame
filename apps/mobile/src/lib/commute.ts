@@ -29,7 +29,27 @@ export type CommuteRoute = {
   mode: TransportMode
   /** 主要運具的路線名，例如「板南線」。後端推不出來時是 null，畫面就不顯示即時狀態。 */
   line: string | null
+  /*
+   * 通知時段。這是通知準確度的前提 —— 不知道使用者幾點通勤，
+   * 就只能在半夜也推「板南線有異常」，那只會讓他把通知關掉。
+   *   usualDays 空陣列 = 每天（不是「都不」）
+   *   時間為 null     = 沒指定，後端會套 23:00–06:00 的靜音時段兜底
+   */
+  usualDays: string[]
+  usualTimeStart: string | null
+  usualTimeEnd: string | null
 }
+
+/** 星期的順序與代碼，跟後端 app.ts 的 DAYS 一致 */
+export const WEEKDAYS = [
+  { value: 'mon', label: '一' },
+  { value: 'tue', label: '二' },
+  { value: 'wed', label: '三' },
+  { value: 'thu', label: '四' },
+  { value: 'fri', label: '五' },
+  { value: 'sat', label: '六' },
+  { value: 'sun', label: '日' },
+] as const
 
 const STORAGE_KEY = 'yoxi.commuteRoute'
 
@@ -41,17 +61,25 @@ function isMode(value: unknown): value is TransportMode {
 export function parseRoute(value: unknown): CommuteRoute | null {
   if (typeof value !== 'object' || value === null) return null
 
-  const { origin, destination, mode, line } = value as Record<string, unknown>
+  const r = value as Record<string, unknown>
+  const { origin, destination, mode, line } = r
   /* 少了起訖就不算一條路線，寧可當成沒設定過 */
   if (typeof origin !== 'string' || !origin.trim()) return null
   if (typeof destination !== 'string' || !destination.trim()) return null
+
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
 
   return {
     origin,
     destination,
     /* 舊版快取沒有 mode，補成捷運 —— 當時的設定流程只做得出捷運路線 */
     mode: isMode(mode) ? mode : 'metro',
-    line: typeof line === 'string' && line.trim() ? line : null,
+    line: text(line),
+    usualDays: Array.isArray(r.usualDays)
+      ? r.usualDays.filter((d): d is string => typeof d === 'string')
+      : [],
+    usualTimeStart: text(r.usualTimeStart),
+    usualTimeEnd: text(r.usualTimeEnd),
   }
 }
 
@@ -150,6 +178,11 @@ export type SaveCommuteRouteInput = {
   mode: TransportMode
   /** 使用者自己指定的路線名；沒給就由後端從起訖站推 */
   line?: string | null
+  /** 空陣列 = 每天 */
+  usualDays?: string[]
+  /** 兩個必須成對給，只給一邊後端會回 400 */
+  usualTimeStart?: string | null
+  usualTimeEnd?: string | null
 }
 
 export type SaveCommuteRouteResult = {

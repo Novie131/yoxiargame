@@ -5,8 +5,10 @@ import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
 import type { TransportMode } from './db/repositories/commute.ts'
-import { readUserRef } from './identity.ts'
+import { listNotifications, markRead } from './db/repositories/notifications.ts'
+import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
 import { clearRoute, readRoute, saveRoute } from './services/commute.ts'
+import { pollTransit } from './services/transit-watch.ts'
 import {
   getBusStatus,
   getMetroStatus,
@@ -176,7 +178,37 @@ const MODES: TransportMode[] = ['metro', 'bus', 'mixed']
 /* 站名長度上限。純粹是防止把任意長字串寫進資料庫，不是業務規則。 */
 const MAX_NAME_LENGTH = 60
 
-type ParsedRoute = { origin: string; destination: string; mode: TransportMode; line: string | null }
+type ParsedRoute = {
+  origin: string
+  destination: string
+  mode: TransportMode
+  line: string | null
+  usualDays: string[]
+  usualTimeStart: string | null
+  usualTimeEnd: string | null
+}
+
+/* 星期用小寫三字母，跟 Intl 的 weekday: 'short' 對齊，transit-watch 直接比對 */
+const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
+
+function parseDays(value: unknown): string[] | null {
+  /* 沒給就是空陣列 = 每天 */
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value)) return null
+
+  const days = [...new Set(value)]
+  if (days.some((d) => typeof d !== 'string' || !DAYS.includes(d))) return null
+  /* 依週序排好再存，之後顯示或比對都不用再排一次 */
+  return DAYS.filter((d) => days.includes(d))
+}
+
+function parseTime(value: unknown): string | null | undefined {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string' || !TIME_PATTERN.test(value)) return undefined
+  return value
+}
 
 function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok: false; error: string } {
   if (typeof body !== 'object' || body === null) {
@@ -198,6 +230,26 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
     return { ok: false, error: `mode 必須是 ${MODES.join('、')} 其中之一` }
   }
 
+  const { usualDays, usualTimeStart, usualTimeEnd } = body as Record<string, unknown>
+
+  const days = parseDays(usualDays)
+  if (days === null) {
+    return { ok: false, error: `usualDays 只接受 ${DAYS.join('、')}` }
+  }
+
+  const start = parseTime(usualTimeStart)
+  const end = parseTime(usualTimeEnd)
+  if (start === undefined || end === undefined) {
+    return { ok: false, error: '時間格式必須是 HH:MM（24 小時制）' }
+  }
+  /*
+   * 只給一邊沒有意義 —— 「從 08:00 開始通知」到什麼時候？
+   * 與其自己補一個結束時間，不如要求成對，讓意圖是明確的。
+   */
+  if ((start === null) !== (end === null)) {
+    return { ok: false, error: 'usualTimeStart 與 usualTimeEnd 必須成對提供' }
+  }
+
   return {
     ok: true,
     value: {
@@ -206,6 +258,9 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
       mode: mode as TransportMode,
       /* 沒給就讓 service 從起訖站推，不要在這裡填預設值 */
       line: typeof line === 'string' && line.trim() ? line.trim() : null,
+      usualDays: days,
+      usualTimeStart: start,
+      usualTimeEnd: end,
     },
   }
 }
@@ -257,6 +312,69 @@ app.delete('/commute/route', async (c) => {
     console.error('[commute/route:delete]', error)
     return c.json({ error: '刪除通勤路線失敗' }, 502)
   }
+})
+
+/*
+ * 通知收件匣。
+ *
+ * 內容是由 services/transit-watch.ts 的輪詢主動寫進來的，這裡只負責讀與標記已讀。
+ * 未讀數就是這裡算出來的 —— 行程頁鈴鐺上的數字第一次有真實來源。
+ */
+app.get('/notifications', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  if (!hasDatabase()) return c.json({ notifications: [], unreadCount: 0 })
+
+  try {
+    const result = await listNotifications(userRef, USER_REF_PROVIDER)
+    /* 每個人的收件匣都不一樣，不能讓中間層快取 */
+    c.header('Cache-Control', 'private, no-store')
+    return c.json(result)
+  } catch (error) {
+    console.error('[notifications:get]', error)
+    return c.json({ error: '讀取通知失敗' }, 502)
+  }
+})
+
+/** 帶 id 就標那一則，不帶就全部標成已讀 */
+app.post('/notifications/read', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  if (!hasDatabase()) return c.json({ marked: 0 })
+
+  let id: string | undefined
+  /* 沒有 body 是合法的（= 全部標已讀），所以解析失敗不算錯誤 */
+  const body = (await c.req.json().catch(() => null)) as { id?: unknown } | null
+  if (body && typeof body.id === 'string') {
+    if (!/^[0-9a-f-]{36}$/i.test(body.id)) return c.json({ error: 'id 格式錯誤' }, 400)
+    id = body.id
+  }
+
+  try {
+    const marked = await markRead(userRef, USER_REF_PROVIDER, id)
+    return c.json({ marked })
+  } catch (error) {
+    console.error('[notifications:read]', error)
+    return c.json({ error: '標記已讀失敗' }, 502)
+  }
+})
+
+/*
+ * 手動觸發一輪監看。
+ *
+ * 正式環境是由 Cloudflare 的 Cron Trigger 呼叫 worker.ts 的 scheduled()，
+ * 不會經過這裡；這個端點是給本機開發與部署後驗證用的。
+ *
+ * 必須設定 POLL_TOKEN 才會存在 —— 沒設定就回 404，讓它在正式環境預設是關的。
+ * 它會消耗 TDX 額度並寫入通知，不是能公開的東西。
+ */
+app.post('/internal/poll', async (c) => {
+  const token = process.env.POLL_TOKEN
+  if (!token) return c.json({ error: 'Not Found' }, 404)
+  if (c.req.header('X-Poll-Token') !== token) return c.json({ error: '未授權' }, 401)
+
+  const result = await pollTransit()
+  return c.json(result)
 })
 
 app.post('/agent/chat', async (c) => {

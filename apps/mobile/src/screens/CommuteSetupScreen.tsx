@@ -11,6 +11,7 @@ import {
   metroLineOf,
   save,
   useCommuteRoute,
+  WEEKDAYS,
   type CommuteRoute,
   type TransportMode,
 } from '@/lib/commute'
@@ -31,6 +32,10 @@ import { useStationSuggestions } from '@/lib/stations'
  * 路線名（板南線）不再由畫面提供，改由後端從起訖站反推；推不出來就不顯示，
  * 不要猜一條線。同理，這裡也不再顯示「約 25 分鐘」「3 個轉乘站」——
  * 那些數字沒有任何資料來源。
+ *
+ * 表單多問了通知時段，因為主動通知需要它：不知道使用者幾點通勤，
+ * 就只能在半夜也推「板南線有異常」。預設值是常見的上班族作息，
+ * 使用者看得到也改得動，比在背後偷偷假設好。
  */
 
 const INTRO =
@@ -45,6 +50,13 @@ const MODES: Array<{ value: TransportMode; label: string }> = [
   { value: 'bus', label: '公車' },
   { value: 'mixed', label: '混合' },
 ]
+
+/* 預設時段。涵蓋一般的上下班往返，同時把深夜擋在外面。 */
+const DEFAULT_TIME_START = '07:00'
+const DEFAULT_TIME_END = '21:00'
+
+/* 預設平日。週末不通勤的人佔多數，而且使用者一眼就看得出來要不要改。 */
+const DEFAULT_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri']
 
 /* 站名輸入。捷運會給建議清單，公車沒有站表可對，就讓使用者自己打。 */
 function StationField({
@@ -109,10 +121,19 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [mode, setMode] = useState<TransportMode>('metro')
+  const [days, setDays] = useState<string[]>(DEFAULT_DAYS)
+  const [limitTime, setLimitTime] = useState(true)
+  const [timeStart, setTimeStart] = useState(DEFAULT_TIME_START)
+  const [timeEnd, setTimeEnd] = useState(DEFAULT_TIME_END)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const ready = origin.trim() !== '' && destination.trim() !== ''
+
+  const toggleDay = (value: string) =>
+    setDays((prev) =>
+      prev.includes(value) ? prev.filter((d) => d !== value) : [...prev, value],
+    )
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -121,7 +142,15 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
     setSaving(true)
     setError(null)
     try {
-      const result = await save({ origin, destination, mode })
+      const result = await save({
+        origin,
+        destination,
+        mode,
+        /* 七天全選就等於不限制，送空陣列讓後端少存一份等價的資料 */
+        usualDays: days.length === WEEKDAYS.length ? [] : days,
+        usualTimeStart: limitTime ? timeStart : null,
+        usualTimeEnd: limitTime ? timeEnd : null,
+      })
       onSaved(result.transferRequired)
     } catch (e) {
       setError(e instanceof Error ? e.message : '儲存失敗，請稍後再試')
@@ -179,6 +208,66 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         </div>
       </div>
 
+      <div className="mt-4 border-t border-black/[.07] pt-3">
+        <p className="text-[12px] text-subtle">通知時段</p>
+        <p className="mt-0.5 text-[12px] text-muted">
+          只在這些時間通知你，避免半夜被吵醒。
+        </p>
+
+        <div className="mt-2 flex gap-1.5">
+          {WEEKDAYS.map((d) => (
+            <button
+              key={d.value}
+              type="button"
+              onClick={() => toggleDay(d.value)}
+              aria-pressed={days.includes(d.value)}
+              className={[
+                'h-9 flex-1 rounded-lg text-[13px] font-semibold transition-colors',
+                days.includes(d.value)
+                  ? 'bg-primary text-white'
+                  : 'bg-surface-3 text-muted',
+              ].join(' ')}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="mt-3 flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={limitTime}
+            onChange={(e) => setLimitTime(e.target.checked)}
+            className="h-4 w-4 accent-[var(--color-primary)]"
+          />
+          <span className="text-[13px]">限制時段</span>
+        </label>
+
+        {limitTime && (
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="time"
+              value={timeStart}
+              onChange={(e) => setTimeStart(e.target.value)}
+              aria-label="通知開始時間"
+              className="h-11 flex-1 rounded-xl bg-surface-3 px-3 text-[15px] outline-none"
+            />
+            <span className="text-[13px] text-subtle">至</span>
+            <input
+              type="time"
+              value={timeEnd}
+              onChange={(e) => setTimeEnd(e.target.value)}
+              aria-label="通知結束時間"
+              className="h-11 flex-1 rounded-xl bg-surface-3 px-3 text-[15px] outline-none"
+            />
+          </div>
+        )}
+
+        {days.length === 0 && (
+          <p className="mt-2 text-[12px] text-primary">沒有選任何一天就不會收到通知。</p>
+        )}
+      </div>
+
       {error && (
         <p className="mt-3 rounded-xl bg-primary-tint px-3 py-2 text-[13px] text-primary" role="alert">
           {error}
@@ -194,6 +283,23 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
       </button>
     </form>
   )
+}
+
+/* 把時段講成人話。空的星期陣列代表每天，不是都不。 */
+function describeWindow(route: CommuteRoute): string {
+  const days =
+    route.usualDays.length === 0
+      ? '每天'
+      : `週${route.usualDays
+          .map((d) => WEEKDAYS.find((w) => w.value === d)?.label ?? '')
+          .join('')}`
+
+  const time =
+    route.usualTimeStart && route.usualTimeEnd
+      ? `${route.usualTimeStart}–${route.usualTimeEnd}`
+      : '全天（深夜除外）'
+
+  return `${days} ${time}`
 }
 
 /* 存好之後的確認卡。內容全部來自實際存下來的路線，沒有補任何裝飾用的數字。 */
@@ -220,6 +326,7 @@ function SavedCard({
       {transferRequired && (
         <p className="text-[13px] text-muted">這兩站沒有直達路線，中途需要轉乘。</p>
       )}
+      <p className="text-[13px] text-muted">通知時段：{describeWindow(route)}</p>
       {/* 沒有可查的捷運路線名（公車、或推不出來）就只確認有記下來 */}
       {line ? (
         <TransitStatus line={line} />

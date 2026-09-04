@@ -189,8 +189,28 @@ export function createTools(userRef: string) {
             '路線名。使用者有明講才帶（捷運「板南線」、公車「307」）；' +
               '沒明講就不要帶，系統會自己從起訖站推出來。',
           ),
+        usual_days: z
+          .array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']))
+          .optional()
+          .describe('通勤的星期。「平日」= mon…fri。每天都通勤就不要帶。'),
+        usual_time_start: z
+          .string()
+          .optional()
+          .describe('通知時段的開始，HH:MM 24 小時制，例如 07:00。要跟結束成對出現。'),
+        usual_time_end: z
+          .string()
+          .optional()
+          .describe('通知時段的結束，HH:MM 24 小時制，例如 21:00。要跟開始成對出現。'),
       }),
-      execute: async ({ origin, destination, mode, line }) => {
+      execute: async ({
+        origin,
+        destination,
+        mode,
+        line,
+        usual_days,
+        usual_time_start,
+        usual_time_end,
+      }) => {
         try {
           const { route, transferRequired, persisted } = await saveRoute({
             userRef,
@@ -198,6 +218,10 @@ export function createTools(userRef: string) {
             destination,
             mode,
             line,
+            usualDays: usual_days,
+            /* 只給一邊沒有意義，兩邊都有才算指定了時段 */
+            usualTimeStart: usual_time_start && usual_time_end ? usual_time_start : null,
+            usualTimeEnd: usual_time_start && usual_time_end ? usual_time_end : null,
           })
           return {
             saved: true,
@@ -208,6 +232,9 @@ export function createTools(userRef: string) {
               destination: route.destination,
               mode: route.mode,
               line: route.line,
+              usual_days: route.usualDays,
+              usual_time_start: route.usualTimeStart,
+              usual_time_end: route.usualTimeEnd,
             },
             transfer_required: transferRequired,
             notification_enabled: route.notificationEnabled,
@@ -234,6 +261,9 @@ export function createTools(userRef: string) {
                   destination: route.destination,
                   mode: route.mode,
                   line: route.line,
+                  usual_days: route.usualDays,
+                  usual_time_start: route.usualTimeStart,
+                  usual_time_end: route.usualTimeEnd,
                 },
               }
             : { configured: false, route: null }

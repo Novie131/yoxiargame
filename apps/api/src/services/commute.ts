@@ -25,6 +25,13 @@ export type SaveRouteInput = {
   mode: TransportMode
   /** 使用者自己指定的路線名；沒給就從起訖站推 */
   line?: string | null
+  /*
+   * 通勤時段。沒給就是不限，由 transit-watch 的靜音時段兜底。
+   * 這是通知準確度的前提：不知道使用者幾點通勤，就只能亂猜要不要打擾他。
+   */
+  usualDays?: string[]
+  usualTimeStart?: string | null
+  usualTimeEnd?: string | null
 }
 
 export type SaveRouteResult = {
@@ -90,6 +97,12 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
    * 沒有設定 DATABASE_URL 時（例如純 demo 部署）不寫資料庫，但仍回傳完整結果：
    * 流程照樣走得完、畫面照樣更新，只是重開 App 就沒了。
    */
+  const window = {
+    usualDays: input.usualDays ?? [],
+    usualTimeStart: input.usualTimeStart ?? null,
+    usualTimeEnd: input.usualTimeEnd ?? null,
+  }
+
   if (!hasDatabase()) {
     return {
       route: {
@@ -97,6 +110,7 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
         destination,
         mode: input.mode,
         line,
+        ...window,
         delayThresholdMinutes: 5,
         notificationEnabled: true,
       },
@@ -112,6 +126,7 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
     destination,
     mode: input.mode,
     line,
+    ...window,
   })
   return { route, transferRequired, persisted: true }
 }
