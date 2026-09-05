@@ -8,7 +8,7 @@ import {
   type TransportMode,
 } from '../db/repositories/commute.ts'
 import { USER_REF_PROVIDER } from '../identity.ts'
-import { hasTdxCredentials, resolveCommuteLine } from './tdx.ts'
+import { findStationPosition, hasTdxCredentials, resolveCommuteLine } from './tdx.ts'
 
 /*
  * 通勤路線的使用案例層。
@@ -26,6 +26,8 @@ export type SaveRouteInput = {
   mode: TransportMode
   /** 使用者自己指定的路線名；沒給就從起訖站推 */
   line?: string | null
+  /* TDX 城市代碼。公車必填才查得到，捷運不需要。 */
+  city?: string | null
   /*
    * 通勤時段。沒給就是不限，由 transit-watch 的靜音時段兜底。
    * 這是通知準確度的前提：不知道使用者幾點通勤，就只能亂猜要不要打擾他。
@@ -98,6 +100,26 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
    * 沒有設定 DATABASE_URL 時（例如純 demo 部署）不寫資料庫，但仍回傳完整結果：
    * 流程照樣走得完、畫面照樣更新，只是重開 App 就沒了。
    */
+  /*
+   * 公車一定要有城市才查得到路線；沒給就當台北（原本全域的隱含預設）。
+   * 捷運不需要，留 null 免得存進一個會誤導人的值。
+   */
+  const city =
+    input.mode === 'metro' ? null : (input.city?.trim() || 'Taipei')
+
+  /*
+   * 起訖站的座標，給「通勤路線附近有什麼活動」用。
+   * 查不到就留 null —— 那條路線不參與地點推薦，不要拿一個猜的座標去比對。
+   */
+  const [originPos, destinationPos] = hasTdxCredentials()
+    ? await Promise.all([findStationPosition(origin), findStationPosition(destination)]).catch(
+        (error: unknown) => {
+          console.error('[commute] 查詢站點座標失敗：', error)
+          return [null, null] as const
+        },
+      )
+    : [null, null]
+
   const window = {
     usualDays: input.usualDays ?? [],
     usualTimeStart: input.usualTimeStart ?? null,
@@ -111,6 +133,7 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
         destination,
         mode: input.mode,
         line,
+        city,
         ...window,
         delayThresholdMinutes: 5,
         notificationEnabled: true,
@@ -127,7 +150,12 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
     destination,
     mode: input.mode,
     line,
+    city,
     ...window,
+    originLat: originPos?.lat ?? null,
+    originLon: originPos?.lon ?? null,
+    destinationLat: destinationPos?.lat ?? null,
+    destinationLon: destinationPos?.lon ?? null,
   })
   return { route, transferRequired, persisted: true }
 }

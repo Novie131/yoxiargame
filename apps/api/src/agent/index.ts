@@ -15,6 +15,18 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 - 一律使用繁體中文，並使用台灣用語（捷運不是地鐵、叫車不是打車、機車不是摩托車）。
 - 語氣親切自然，像朋友在聊天，可以適度使用驚嘆號，但不要浮誇。
 - 回覆簡潔，一般三到四句話以內。
+- 純文字，不要使用 Markdown 語法（**粗體**、# 標題、- 清單、表格）。
+  畫面是對話氣泡，不會渲染 Markdown，寫了只會變成一堆星號跟井字。
+
+卡片規則（很重要）：
+- 呼叫 plan_route、search_activities、get_transit_status 之後，畫面會自動把結果
+  排版成卡片。卡片上已經有：站名、每一段搭哪條線、幾站、幾分鐘、轉乘次數、
+  任務名稱、距離、以及可以直接按的叫車鈕。
+- 這三個工具的結果，你的文字回覆**最多兩句**，而且不可以出現卡片上已有的
+  站名、路線名、站數、分鐘數或距離。使用者看得到那些，再念一遍只是噪音。
+- 你要補的是卡片給不了的東西：判斷與提醒。
+  好的例子：「這段要換一次線，尖峰時段可以多抓五分鐘。」
+  壞的例子：「先搭板南線五站到台北車站，再轉淡水信義線五站到劍潭，全程約 28 分鐘。」
 
 行為規則：
 - 需要即時資訊（天氣、路況、車資、活動）時務必呼叫工具，不要憑空編造數字。
@@ -101,9 +113,51 @@ export type CommuteRouteEvent = {
   usualTimeEnd: string | null
 }
 
+/*
+ * 對話裡的動作卡片。
+ *
+ * 有些工具結果用講的講不清楚，或者講完之後使用者還需要做一件事 ——
+ * 路線有哪幾段、附近有哪些任務、要不要直接叫車。那些變成卡片，
+ * 使用者可以直接按，不用再打一次字。
+ *
+ * 刻意只有三種：天氣與通勤路線用一句話就講得完，硬做成卡片只是裝飾。
+ * 判斷標準是「這個結果有沒有後續動作，或有沒有結構化到值得排版」。
+ */
+export type AgentCard =
+  | {
+      kind: 'route_plan'
+      from: string
+      to: string
+      totalMinutes: number
+      transfers: number
+      legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
+    }
+  | {
+      kind: 'missions'
+      area: string
+      missions: Array<{
+        id: string
+        name: string
+        campaign: string
+        /* 相對於查詢的地區，不是相對於使用者 —— 我們不知道使用者在哪 */
+        distanceFromAreaMeters: number
+        lat: number
+        lon: number
+      }>
+    }
+  | {
+      kind: 'transit_status'
+      line: string
+      mode: 'metro' | 'bus'
+      status: 'normal' | 'alert'
+      note: string
+      incidents: Array<{ title: string; description: string }>
+    }
+
 export type AgentEvent =
   | { type: 'text'; value: string }
   | { type: 'commute_route'; route: CommuteRouteEvent }
+  | { type: 'card'; card: AgentCard }
 
 /* save_commute_route 的回傳值 → 事件。形狀不對就當作沒發生，不要讓串流掛掉。 */
 function toCommuteRouteEvent(output: unknown): CommuteRouteEvent | null {
@@ -132,6 +186,110 @@ function toCommuteRouteEvent(output: unknown): CommuteRouteEvent | null {
     usualTimeStart: text(r.usual_time_start),
     usualTimeEnd: text(r.usual_time_end),
   }
+}
+
+/* 工具結果的形狀由我們自己決定，但仍然逐欄檢查 —— 形狀不對就當作沒有卡片 */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
+}
+
+const asString = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
+const asNumber = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+function toRoutePlanCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error) return null
+
+  const from = asString(o.from)
+  const to = asString(o.to)
+  const totalMinutes = asNumber(o.total_minutes)
+  if (!from || !to || totalMinutes === null || !Array.isArray(o.legs)) return null
+
+  const legs = o.legs.flatMap((raw) => {
+    const l = asRecord(raw)
+    const line = l && asString(l.line)
+    const lFrom = l && asString(l.from)
+    const lTo = l && asString(l.to)
+    const stops = l && asNumber(l.stops)
+    const minutes = l && asNumber(l.minutes)
+    if (!line || !lFrom || !lTo || stops === null || minutes === null) return []
+    return [{ line, from: lFrom, to: lTo, stops, minutes }]
+  })
+  if (legs.length === 0) return null
+
+  return {
+    kind: 'route_plan',
+    from,
+    to,
+    totalMinutes,
+    transfers: asNumber(o.transfers) ?? 0,
+    legs,
+  }
+}
+
+function toMissionsCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error || !Array.isArray(o.missions)) return null
+
+  const missions = o.missions.flatMap((raw) => {
+    const m = asRecord(raw)
+    const id = m && asString(m.id)
+    const name = m && asString(m.name)
+    const lat = m && asNumber(m.lat)
+    const lon = m && asNumber(m.lon)
+    /* 沒有 id 或座標就連不到任務面板，那張卡就沒有意義 */
+    if (!id || !name || lat === null || lon === null) return []
+    return [
+      {
+        id,
+        name,
+        campaign: asString(m.campaign) ?? '',
+        distanceFromAreaMeters: asNumber(m.distance_from_area_meters) ?? 0,
+        lat,
+        lon,
+      },
+    ]
+  })
+  /* 一個任務都沒有時不要給空卡片，讓模型用文字說「附近沒有」就好 */
+  if (missions.length === 0) return null
+
+  return { kind: 'missions', area: asString(o.area) ?? '', missions }
+}
+
+function toTransitStatusCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error) return null
+
+  const line = asString(o.line)
+  const mode = o.mode === 'bus' ? 'bus' : o.mode === 'metro' ? 'metro' : null
+  if (!line || !mode) return null
+
+  const incidents = Array.isArray(o.incidents)
+    ? o.incidents.flatMap((raw) => {
+        const i = asRecord(raw)
+        const title = i && asString(i.title)
+        if (!title) return []
+        return [{ title, description: asString(i.description) ?? '' }]
+      })
+    : []
+
+  return {
+    kind: 'transit_status',
+    line,
+    mode,
+    /* 公車的結果沒有 status 欄位，用有沒有事件來判斷 */
+    status: o.status === 'alert' || incidents.length > 0 ? 'alert' : 'normal',
+    note: asString(o.note) ?? '',
+    incidents,
+  }
+}
+
+/** 工具名稱 → 卡片。不在這張表裡的工具就只有文字回覆。 */
+function toCard(toolName: string, output: unknown): AgentCard | null {
+  if (toolName === 'plan_route') return toRoutePlanCard(output)
+  if (toolName === 'search_activities') return toMissionsCard(output)
+  if (toolName === 'get_transit_status') return toTransitStatusCard(output)
+  return null
 }
 
 /*
@@ -183,9 +341,14 @@ export async function* streamAgentReplyWithFallback(
           if (!part.text) continue
           emitted = true
           yield { type: 'text', value: part.text }
-        } else if (part.type === 'tool-result' && part.toolName === 'save_commute_route') {
-          const route = toCommuteRouteEvent(part.output)
-          if (route) yield { type: 'commute_route', route }
+        } else if (part.type === 'tool-result') {
+          if (part.toolName === 'save_commute_route') {
+            const route = toCommuteRouteEvent(part.output)
+            if (route) yield { type: 'commute_route', route }
+          }
+
+          const card = toCard(part.toolName, part.output)
+          if (card) yield { type: 'card', card }
         }
       }
     } catch (error) {

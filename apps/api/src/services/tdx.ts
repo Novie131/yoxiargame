@@ -266,6 +266,12 @@ function getLiveBoard() {
   )
 }
 
+/** 路線清單（id 與中文名）。給路網圖把 LineID 換成看得懂的名字。 */
+export async function listMetroLines(): Promise<Array<{ lineId: string; name: string }>> {
+  const lines = await getLines()
+  return lines.map((l) => ({ lineId: l.LineID, name: l.LineName.Zh_tw }))
+}
+
 /**
  * 使用者說的路線名 → 官方路線。
  * 「板南線」「板南」「BL」都要能對上；對不到時回 null，讓呼叫端照實說查不到。
@@ -412,11 +418,156 @@ type MetroStationOfLine = {
   }>
 }
 
+/*
+ * 站間運行時間。RunTime 是行駛秒數、StopTime 是停靠秒數，兩者都是真實數據 ——
+ * 這是「約 N 分鐘」唯一有根據的來源，沒有它就只能算站數。
+ *
+ * 跟站表一樣是幾乎不變的靜態資料，TTL 拉到一天。
+ */
+export type MetroTravelTime = {
+  LineID: string
+  RouteID: string
+  TravelTimes: Array<{
+    FromStationID: string
+    ToStationID: string
+    RunTime: number
+    StopTime: number
+  }>
+}
+
+export function getS2STravelTime() {
+  return get<MetroTravelTime[]>(
+    `v2/Rail/Metro/S2STravelTime/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+/*
+ * 路線之間的轉乘。
+ *
+ * 這支很關鍵：台北捷運的同一個實體車站在不同路線上是**不同的 StationID**
+ * （西門在板南線是 BL11、在松山新店線是 G12），所以路網圖不能靠「站 id 相同」
+ * 來連轉乘邊，一定要用這份對照表。
+ *
+ * TransferTime 是實際的站內步行分鐘數，連轉乘成本都不用自己猜。
+ */
+export type MetroLineTransfer = {
+  FromLineID: string
+  FromStationID: string
+  ToLineID: string
+  ToStationID: string
+  /** 站內步行時間（分鐘）。不含等車。 */
+  TransferTime: number
+  IsOnSiteTransfer: number
+}
+
+export function getLineTransfers() {
+  return get<MetroLineTransfer[]>(
+    `v2/Rail/Metro/LineTransfer/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+/** 站表。給路網圖用，回傳每條線的站序。 */
+export function getStationsOfLine() {
+  return getStationOfLine()
+}
+
 function getStationOfLine() {
   return get<MetroStationOfLine[]>(
     `v2/Rail/Metro/StationOfLine/${OPERATOR}?%24format=JSON`,
     LINE_TTL_MS,
   )
+}
+
+/*
+ * 站點座標。
+ *
+ * 用來回答「離這個地點最近的捷運站是哪一個、要走多久」——
+ * 沒有座標就沒辦法誠實比較「走路 vs 捷運 vs 叫車」，只能猜。
+ * 跟其他站點資料一樣是靜態的，TTL 一天。
+ */
+type MetroStationPosition = {
+  StationID: string
+  StationName: { Zh_tw: string }
+  StationPosition: { PositionLat: number; PositionLon: number }
+}
+
+function getStationPositions() {
+  return get<MetroStationPosition[]>(
+    `v2/Rail/Metro/Station/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+export type StationLocation = {
+  stationId: string
+  name: string
+  lat: number
+  lon: number
+  /** 與查詢座標的直線距離（公尺） */
+  distanceMeters: number
+}
+
+/*
+ * 兩點間的直線距離（公尺）。Haversine。
+ *
+ * 刻意用直線而不是路網距離：我們沒有步行路網資料，硬要算會是假的。
+ * 直線距離會低估實際步行距離，所以下面估步行時間時要把這件事考慮進去。
+ */
+export function haversineMeters(
+  aLat: number,
+  aLon: number,
+  bLat: number,
+  bLon: number,
+): number {
+  const R = 6_371_000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(bLat - aLat)
+  const dLon = toRad(bLon - aLon)
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(h))
+}
+
+/** 站名 → 座標。查不到（打錯字、或根本是公車站牌）時回 null。 */
+export async function findStationPosition(
+  name: string,
+): Promise<{ lat: number; lon: number } | null> {
+  const q = normalizeStationName(name)
+  if (!q) return null
+
+  const stations = await getStationPositions()
+  const hit = stations.find((s) => normalizeStationName(s.StationName.Zh_tw) === q)
+  return hit?.StationPosition
+    ? { lat: hit.StationPosition.PositionLat, lon: hit.StationPosition.PositionLon }
+    : null
+}
+
+/** 離座標最近的捷運站。查不到站表時回 null。 */
+export async function findNearestStation(
+  lat: number,
+  lon: number,
+): Promise<StationLocation | null> {
+  const stations = await getStationPositions()
+
+  let best: StationLocation | null = null
+  for (const s of stations) {
+    const pos = s.StationPosition
+    if (!pos) continue
+    const distanceMeters = haversineMeters(lat, lon, pos.PositionLat, pos.PositionLon)
+    if (!best || distanceMeters < best.distanceMeters) {
+      best = {
+        stationId: s.StationID,
+        name: s.StationName.Zh_tw,
+        lat: pos.PositionLat,
+        lon: pos.PositionLon,
+        distanceMeters,
+      }
+    }
+  }
+  return best
 }
 
 export type MetroStation = {
@@ -642,6 +793,39 @@ function periodText(a: BusAlert): string | null {
  * 不帶 stop 時會回整條路線的站牌，數量可能上百筆，所以只取最近的幾站；
  * 使用者真正想問的幾乎都是「我這站還有多久」，帶 stop 才是常態。
  */
+/*
+ * 某個縣市目前有效的公車事件。
+ *
+ * 給主動通知的輪詢用。跟捷運同一個道理：Bus/Alert/City/{city} 回的是
+ * 「整個縣市」的事件，一次撈完在自己的資料庫裡分派，成本跟使用者數量無關。
+ * 若改成每條使用者路線各查一次，光是十來個使用者就會打爆 TDX 的額度。
+ */
+export type BusIncident = {
+  eventId: string
+  title: string
+  description: string
+  /** 受影響的路線名。空陣列代表 TDX 沒指定範圍，視為全市通用。 */
+  routes: string[]
+  updatedAt: string
+}
+
+export async function listBusIncidents(city: BusCity): Promise<BusIncident[]> {
+  const alerts = await get<BusAlert[]>(
+    `v2/Bus/Alert/City/${city}?%24format=JSON`,
+    BUS_ALERT_TTL_MS,
+  )
+
+  return alerts.filter(isActiveNow).map((a) => ({
+    eventId: a.AlertID,
+    title: a.Title,
+    description: a.Description,
+    routes: (a.Scope?.Routes ?? [])
+      .map((r) => r.RouteName?.Zh_tw ?? '')
+      .filter((n) => n !== ''),
+    updatedAt: a.UpdateTime,
+  }))
+}
+
 export async function getBusStatus(
   city: BusCity,
   routeName: string,

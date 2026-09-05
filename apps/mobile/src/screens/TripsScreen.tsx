@@ -6,6 +6,7 @@ import { metroLineOf, useCommuteRoute, type CommuteRoute } from '@/lib/commute'
 import { formatDateWithWeekday, greeting } from '@/lib/datetime'
 import { useMember } from '@/lib/member'
 import { useNotifications } from '@/lib/notifications'
+import { useRoutePlan } from '@/lib/routePlan'
 import { useMetroStatus } from '@/lib/transit'
 
 /*
@@ -19,10 +20,10 @@ import { useMetroStatus } from '@/lib/transit'
  *   起訖站      使用者自己設定的
  *   路線即時狀態 TDX
  *   未讀通知數   後端的交通監看實際產生的通知
- *   出發時間、抵達時間  還沒有來源，先不顯示
+ *   通勤時間     TDX 的實際站間行駛時間，由 /transit/plan 算出來
  *
- * 出發時間要能算，需要路徑規劃（TDX 沒有旅行時間）。在那之前寧可留白，
- * 也不要放一個看起來很具體、其實是編的時間。
+ * 「約 N 分鐘」曾經是寫死的 25 分。現在它有真實來源了，但仍然是估計值 ——
+ * 不含等第一班車，所以一律寫「約」。
  */
 
 const MODE_LABEL: Record<CommuteRoute['mode'], string> = {
@@ -134,6 +135,18 @@ function EmptyRouteCard({ onSetup }: { onSetup: () => void }) {
 
 function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () => void }) {
   const line = metroLineOf(route)
+  /* 公車路線查不到捷運路網，會回 unavailable，那就只顯示運具不顯示時間 */
+  const plan = useRoutePlan(
+    route.mode === 'bus' ? null : route.origin,
+    route.mode === 'bus' ? null : route.destination,
+  )
+
+  const summary =
+    plan.status === 'ready'
+      ? `約 ${plan.plan.totalMinutes} 分鐘${plan.plan.transfers > 0 ? `・轉乘 ${plan.plan.transfers} 次` : '・直達'}`
+      : plan.status === 'loading'
+        ? '計算路線中…'
+        : null
 
   return (
     <div className="rounded-2xl bg-surface p-4 shadow-[0_2px_12px_rgba(22,32,55,.06)]">
@@ -160,6 +173,7 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
         <p className="text-[13px] text-muted">
           <span className="mr-1.5">🚇</span>
           {route.line ?? MODE_LABEL[route.mode]}
+          {summary && <span>・{summary}</span>}
         </p>
         {/* 沒有可查的捷運路線名就不顯示狀態，理由見 metroLineOf */}
         {line ? <TransitStatusBadge line={line} /> : null}

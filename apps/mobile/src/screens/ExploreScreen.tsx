@@ -1,11 +1,15 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 
 import eventGoFest from '@/assets/maps/event-gofest.png'
 import { HomeHeader } from '@/components/HomeHeader'
 import { Map } from '@/components/Map'
+import { MissionSheet } from '@/components/MissionSheet'
 import { MapPinIcon } from '@/components/icons'
 import { TaskProgress } from '@/components/TaskProgress'
+import { INTERESTS, toggleInterest, useInterests } from '@/lib/interests'
 import { FALLBACK_LABEL, useUserLocation } from '@/lib/location'
+import { useNearbyMissions } from '@/lib/missions'
 import { CITIES } from '@/lib/map'
 
 /*
@@ -22,25 +26,9 @@ import { CITIES } from '@/lib/map'
  * 而且那種情況下**不會**畫「你在這裡」的藍點 —— 在一個猜出來的座標上
  * 標示使用者本人，比不標示更糟。畫面上會直接說明現在是預設位置。
  *
- * 除了使用者的藍點之外沒有任何標記，那是正確的狀態，不是還沒畫完：
- * 地點資料要等 missions 表（schema 早就建好了，含 PostGIS 地理索引）接上來，
- * 在那之前寧可給一張乾淨的地圖，也不要放假的圖釘。
+ * 地圖上的標記來自 missions 表（PostGIS 空間查詢），不是寫死的示範資料 ——
+ * 沒有資料就是沒有標記。任務資料用 apps/api 的 seed:missions 建立。
  */
-
-const interests = [
-  { id: 'pokemon-go', label: 'Pokémon GO 寶可夢 GO' },
-  { id: 'pikmin', label: 'Pikmin 皮克敏' },
-  { id: 'food', label: '美食' },
-  { id: 'travel', label: '旅行' },
-  { id: 'sport', label: '運動' },
-  { id: 'music', label: '音樂' },
-  { id: 'photo', label: '攝影' },
-  { id: 'reading', label: '閱讀' },
-  { id: 'movie', label: '電影' },
-  { id: 'tech', label: '科技' },
-  { id: 'bar', label: '酒吧' },
-  { id: 'coffee', label: '咖啡' },
-]
 
 const events = [
   {
@@ -54,25 +42,84 @@ const events = [
 ]
 
 export function ExploreScreen() {
-  const [selected, setSelected] = useState<string[]>(['pokemon-go'])
 
   const mapRef = useRef<HTMLDivElement>(null)
   const location = useUserLocation()
+  const { selected, matches } = useInterests()
   /*
    * 沒選城市時看使用者的位置。選了才切到那個城市，
    * 這樣「我在哪」是預設，城市按鈕是刻意的跳轉。
    */
+  /*
+   * 通知會導到 /explore?mission=<id>，直接打開那個任務的面板 ——
+   * 主動推薦如果只是把人丟到探索頁，他還得自己在地圖上找回那個任務。
+   */
+  const [params] = useSearchParams()
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
+    () => params.get('mission'),
+  )
   const [cityId, setCityId] = useState<string | null>(null)
   const city = CITIES.find((c) => c.id === cityId) ?? null
 
-  const view = city
-    ? { center: city.center, zoom: city.zoom }
-    : { center: { lng: location.lon, lat: location.lat }, zoom: 13 }
+  /*
+   * 從通知進來時，通知會帶著被推薦任務的座標 —— 把地圖移過去，
+   * 那個任務才會落在「附近」的查詢範圍內，面板也才打得開。
+   */
+  const linkedLat = Number(params.get('lat'))
+  const linkedLon = Number(params.get('lon'))
+  const linkedCenter =
+    Number.isFinite(linkedLat) && Number.isFinite(linkedLon) && params.get('mission')
+      ? { lng: linkedLon, lat: linkedLat }
+      : null
 
-  const toggle = (id: string) =>
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    )
+  const view = linkedCenter
+    ? { center: linkedCenter, zoom: 15 }
+    : city
+      ? { center: city.center, zoom: city.zoom }
+      : { center: { lng: location.lon, lat: location.lat }, zoom: 13 }
+
+  /*
+   * 搜尋半徑跟著視野走：看整個城市時要涵蓋市域，看自己位置時只找走得到的範圍。
+   */
+  const missions = useNearbyMissions(
+    view.center.lat,
+    view.center.lng,
+    city ? 20_000 : 5_000,
+  )
+
+  /*
+   * 一定要 memo。Map 的標記 effect 相依於這個陣列，每次 render 都給新陣列的話
+   * 標記會被反覆刪掉重畫，畫面會閃。
+   */
+  const selectedMission = missions.find((m) => m.id === selectedMissionId) ?? null
+
+  /*
+   * 網址換了就在 render 當下同步，不要用 effect ——
+   * 等 effect 的話中間會有一幀顯示的是上一個任務。這是 React 官方的
+   * 「render 期間調整 state」寫法，不是副作用（lib/transit.ts 也是這樣做的）。
+   */
+  const deepLinkedId = params.get('mission')
+  const [renderedDeepLink, setRenderedDeepLink] = useState(deepLinkedId)
+  if (renderedDeepLink !== deepLinkedId) {
+    setRenderedDeepLink(deepLinkedId)
+    if (deepLinkedId) setSelectedMissionId(deepLinkedId)
+  }
+
+  /*
+   * 全部畫出來，不符合篩選的變淡而不是移除。
+   * 直接篩掉會讓地圖突然清空，看起來像故障。
+   */
+  const markers = useMemo(
+    () =>
+      missions.map((m) => ({
+        id: m.id,
+        position: { lng: m.lon, lat: m.lat },
+        dimmed: !matches(m.tags),
+      })),
+    [missions, matches],
+  )
+
+  const matchedCount = markers.filter((m) => !m.dimmed).length
 
   return (
     <div
@@ -88,13 +135,13 @@ export function ExploreScreen() {
         </p>
 
         <div className="mt-3.5 flex flex-wrap gap-2">
-          {interests.map(({ id, label }) => {
+          {INTERESTS.map(({ id, label, hasData }) => {
             const on = selected.includes(id)
             return (
               <button
                 key={id}
                 type="button"
-                onClick={() => toggle(id)}
+                onClick={() => toggleInterest(id)}
                 aria-pressed={on}
                 className={[
                   'rounded-full px-3.5 py-2 text-[13px] transition-colors',
@@ -105,6 +152,8 @@ export function ExploreScreen() {
                 style={on ? undefined : { background: '#F8E1DB' }}
               >
                 {label}
+                {/* 目前沒有任何任務掛這個標籤，先講清楚免得使用者以為壞了 */}
+                {!hasData && <span className="ml-1 text-[10px] text-subtle">尚無任務</span>}
               </button>
             )
           })}
@@ -144,15 +193,23 @@ export function ExploreScreen() {
           <Map
             center={view.center}
             zoom={view.zoom}
+            markers={markers}
+            onMarkerClick={setSelectedMissionId}
             /* 沒定位到就不畫藍點，只是把視野放在預設位置 */
             userLocation={location.precise ? { lng: location.lon, lat: location.lat } : null}
             className="h-[340px] w-full"
           />
 
           <p className="px-4 py-2.5 text-[12px] text-subtle">
-            {location.precise
-              ? '藍點是你目前的位置。拖曳平移、雙指或滾輪縮放。'
-              : `未取得定位權限，先顯示${FALLBACK_LABEL}。開啟定位後會移到你的位置。`}
+            {markers.length > 0
+              ? selected.length > 0
+                ? matchedCount > 0
+                  ? `符合你興趣的有 ${matchedCount} 個，另外 ${markers.length - matchedCount} 個已淡化。`
+                  : `這一帶的 ${markers.length} 個任務都不符合你選的興趣。`
+                : `這一帶有 ${markers.length} 個探索任務，點圖釘看怎麼去。`
+              : location.precise
+                ? '藍點是你目前的位置。這一帶目前沒有探索任務。'
+                : `未取得定位權限，先顯示${FALLBACK_LABEL}。開啟定位後會移到你的位置。`}
           </p>
         </div>
       </section>
@@ -224,6 +281,15 @@ export function ExploreScreen() {
           開始探索
         </button>
       </section>
+
+      {selectedMission && (
+        <MissionSheet
+          mission={selectedMission}
+          /* 沒定位到就沒辦法比較怎麼去，面板會照實說 */
+          origin={location.precise ? { lat: location.lat, lon: location.lon } : null}
+          onClose={() => setSelectedMissionId(null)}
+        />
+      )}
 
       <TaskProgress badge={3} />
     </div>

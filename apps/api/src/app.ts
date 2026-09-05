@@ -5,9 +5,13 @@ import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
 import type { TransportMode } from './db/repositories/commute.ts'
+import { findNearbyMissions } from './db/repositories/missions.ts'
+import { getPreferences, savePreferences } from './db/repositories/preferences.ts'
 import { listNotifications, markRead } from './db/repositories/notifications.ts'
 import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
 import { clearRoute, readRoute, saveRoute, setNotifications } from './services/commute.ts'
+import { planMetroRoute } from './services/route-planner.ts'
+import { compareTripOptions } from './services/trip-options.ts'
 import { pollTransit } from './services/transit-watch.ts'
 import {
   getBusStatus,
@@ -38,7 +42,7 @@ app.use('/*', (c, next) => {
 
   return cors({
     origin: configured.length ? configured : '*',
-    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     /* X-User-Ref 是前端帶的裝置識別，見 identity.ts —— 不是身分驗證 */
     allowHeaders: ['Content-Type', 'X-User-Ref'],
     maxAge: 86400,
@@ -166,6 +170,181 @@ app.get('/transit/stations', async (c) => {
 })
 
 /*
+ * 使用者偏好。
+ *
+ * 興趣同時存在前端 localStorage（即時的畫面狀態）與這裡（後端輪詢要看得到）。
+ * 只有「主動推薦」需要後端那一份 —— 沒有它，反向導流就篩不了興趣。
+ */
+app.get('/me/preferences', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+  if (!hasDatabase()) return c.json({ interests: [], discoveryEnabled: true })
+
+  try {
+    const prefs = await getPreferences(userRef, USER_REF_PROVIDER)
+    c.header('Cache-Control', 'private, no-store')
+    return c.json(prefs)
+  } catch (error) {
+    console.error('[me/preferences:get]', error)
+    return c.json({ error: '讀取偏好失敗' }, 502)
+  }
+})
+
+app.put('/me/preferences', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: '請求內容不是合法的 JSON' }, 400)
+  }
+
+  const { interests, discoveryEnabled } = (body ?? {}) as {
+    interests?: unknown
+    discoveryEnabled?: unknown
+  }
+
+  if (interests !== undefined) {
+    if (!Array.isArray(interests) || interests.some((i) => typeof i !== 'string')) {
+      return c.json({ error: 'interests 必須是字串陣列' }, 400)
+    }
+    /* 擋住異常長度的輸入寫進資料庫；標籤本來就只有十來個 */
+    if (interests.length > 50) return c.json({ error: 'interests 過多' }, 400)
+  }
+  if (discoveryEnabled !== undefined && typeof discoveryEnabled !== 'boolean') {
+    return c.json({ error: 'discoveryEnabled 必須是布林值' }, 400)
+  }
+
+  /* 沒有資料庫時就是存不了，照實說而不是假裝成功 */
+  if (!hasDatabase()) return c.json({ error: '偏好儲存未啟用' }, 503)
+
+  try {
+    const saved = await savePreferences(userRef, USER_REF_PROVIDER, {
+      interests: interests as string[] | undefined,
+      discoveryEnabled: discoveryEnabled as boolean | undefined,
+    })
+    return c.json(saved)
+  } catch (error) {
+    console.error('[me/preferences:put]', error)
+    return c.json({ error: '儲存偏好失敗' }, 502)
+  }
+})
+
+/*
+ * 附近的探索任務（地理圍欄）。
+ *
+ * 查詢走 PostGIS 的 ST_DWithin，吃 001 就建好的 GiST 空間索引，
+ * 所以半徑再大也不會變成全表掃描。
+ */
+
+/* 半徑上限。再大就不是「附近」了，而且回應會膨脹。 */
+const MAX_MISSION_RADIUS_M = 50_000
+const DEFAULT_MISSION_RADIUS_M = 3_000
+
+app.get('/missions/nearby', async (c) => {
+  const lat = Number(c.req.query('lat'))
+  const lon = Number(c.req.query('lon'))
+  const radius = Number(c.req.query('radius') ?? DEFAULT_MISSION_RADIUS_M)
+  /*
+   * 逗號分隔的興趣標籤。探索地圖刻意不帶 —— 那邊要全部拿回來自己變淡，
+   * 直接篩掉會讓地圖突然清空。這是給 agent 與清單用的。
+   */
+  const tags = c.req
+    .query('tags')
+    ?.split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return c.json({ error: 'lat 與 lon 必須是數字' }, 400)
+  }
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return c.json({ error: 'lat 或 lon 超出合理範圍' }, 400)
+  }
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return c.json({ error: 'radius 必須是正數' }, 400)
+  }
+
+  /* 沒有資料庫就是沒有任務，回空陣列而不是錯誤 —— 這是輔助內容，不該擋住畫面 */
+  if (!hasDatabase()) return c.json({ missions: [] })
+
+  try {
+    const missions = await findNearbyMissions(
+      lat,
+      lon,
+      Math.min(radius, MAX_MISSION_RADIUS_M),
+      20,
+      tags,
+    )
+    /* 任務內容不常變，但「我在不在圍欄裡」會隨位置變，所以不讓中間層快取 */
+    c.header('Cache-Control', 'private, max-age=60')
+    return c.json({ missions })
+  } catch (error) {
+    console.error('[missions/nearby]', error)
+    return c.json({ error: '任務資料暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 「怎麼去」的選項比較。給探索任務的詳情面板用。
+ *
+ * 回傳的選項依實際時間排序，叫車固定在最後且不含時間與車資 ——
+ * 那兩個數字目前沒有任何資料來源。詳見 services/trip-options.ts。
+ */
+app.get('/trip/options', async (c) => {
+  const fromLat = Number(c.req.query('fromLat'))
+  const fromLon = Number(c.req.query('fromLon'))
+  const toLat = Number(c.req.query('toLat'))
+  const toLon = Number(c.req.query('toLon'))
+
+  const coords = [fromLat, fromLon, toLat, toLon]
+  if (coords.some((n) => !Number.isFinite(n))) {
+    return c.json({ error: '四個座標參數都必須是數字' }, 400)
+  }
+  if (Math.abs(fromLat) > 90 || Math.abs(toLat) > 90) {
+    return c.json({ error: '緯度超出合理範圍' }, 400)
+  }
+  if (Math.abs(fromLon) > 180 || Math.abs(toLon) > 180) {
+    return c.json({ error: '經度超出合理範圍' }, 400)
+  }
+
+  try {
+    const options = await compareTripOptions(fromLat, fromLon, toLat, toLon)
+    /* 結果只跟座標有關，可以放心讓用戶端快取 */
+    c.header('Cache-Control', 'public, max-age=600')
+    return c.json(options)
+  } catch (error) {
+    console.error('[trip/options]', error)
+    return c.json({ error: '交通選項暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 捷運路徑規劃。
+ *
+ * 路網是靜態資料，服務端建一次圖快取一天，之後每次查詢都是本地計算 ——
+ * 所以這支端點不會消耗 TDX 額度，用戶端也可以放心快取久一點。
+ */
+app.get('/transit/plan', async (c) => {
+  const from = c.req.query('from')?.trim()
+  const to = c.req.query('to')?.trim()
+
+  if (!from || !to) return c.json({ error: '缺少 from 或 to 參數' }, 400)
+  if (!hasTdxCredentials()) return c.json({ error: 'TDX 金鑰未設定' }, 503)
+
+  try {
+    const plan = await planMetroRoute(from, to)
+    if (!plan) return c.json({ error: `查不到「${from}」到「${to}」的捷運路線` }, 404)
+
+    c.header('Cache-Control', 'public, max-age=3600')
+    return c.json(plan)
+  } catch (error) {
+    console.error('[transit/plan]', error)
+    return c.json({ error: '路線規劃暫時無法使用' }, 502)
+  }
+})
+
+/*
  * 通勤路線。
  *
  * 使用者由 X-User-Ref 標頭識別（identity.ts，不是身分驗證）。
@@ -183,6 +362,7 @@ type ParsedRoute = {
   destination: string
   mode: TransportMode
   line: string | null
+  city: string | null
   usualDays: string[]
   usualTimeStart: string | null
   usualTimeEnd: string | null
@@ -230,7 +410,14 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
     return { ok: false, error: `mode 必須是 ${MODES.join('、')} 其中之一` }
   }
 
-  const { usualDays, usualTimeStart, usualTimeEnd } = body as Record<string, unknown>
+  const { city, usualDays, usualTimeStart, usualTimeEnd } = body as Record<string, unknown>
+
+  /* 公車的城市代碼要對得上 TDX，打錯的話之後查不到任何東西且不會有錯誤 */
+  if (city !== undefined && city !== null && city !== '') {
+    if (typeof city !== 'string' || !isBusCity(city)) {
+      return { ok: false, error: `不支援的縣市代碼「${String(city)}」` }
+    }
+  }
 
   const days = parseDays(usualDays)
   if (days === null) {
@@ -258,6 +445,7 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
       mode: mode as TransportMode,
       /* 沒給就讓 service 從起訖站推，不要在這裡填預設值 */
       line: typeof line === 'string' && line.trim() ? line.trim() : null,
+      city: typeof city === 'string' && city.trim() ? city.trim() : null,
       usualDays: days,
       usualTimeStart: start,
       usualTimeEnd: end,

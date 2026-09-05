@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { ChatComposer } from '@/components/ChatComposer'
+import { AgentCardView } from '@/components/AgentCards'
 import { AssistantMessage, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
 import { sendMessage, useConversation } from '@/lib/conversation'
@@ -35,7 +36,9 @@ export function AgentActivityScreen() {
             <UserMessage key={i}>{m.content}</UserMessage>
           ) : (
             <AssistantMessage key={i}>
-              {m.content || <span className="text-subtle">思考中...</span>}
+              {m.content || (m.cards?.length ? null : <span className="text-subtle">思考中...</span>)}
+              {/* 卡片跟文字是同一則回覆的兩個部分，所以放在同一個氣泡裡 */}
+              {m.cards?.map((card, ci) => <AgentCardView key={ci} card={card} />)}
             </AssistantMessage>
           ),
         )}

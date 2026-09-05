@@ -20,6 +20,11 @@ export type CommuteRoute = {
   /** 主要運具的路線名。推不出來時為 null，畫面就不顯示即時狀態。 */
   line: string | null
   /*
+   * TDX 的城市代碼（Taipei、Taichung…）。只有公車需要 ——
+   * 公車路線名要搭配城市才查得到，「307」在台北與台中是不同的線。
+   */
+  city: string | null
+  /*
    * 通勤時段。通知要發得準就必須知道 —— 半夜推「板南線有異常」只會被關掉。
    *   usualDays 空陣列 = 每天都通勤（不是「都不通勤」）
    *   時間為 null    = 沒指定，交給 transit-watch 的靜音時段判斷
@@ -39,10 +44,19 @@ export type SaveCommuteRouteInput = {
   destination: string
   mode: TransportMode
   line?: string | null
+  city?: string | null
   usualDays?: string[]
   usualTimeStart?: string | null
   usualTimeEnd?: string | null
   delayThresholdMinutes?: number
+  /*
+   * 起訖站的座標。給「通勤路線附近有什麼活動」的空間查詢用。
+   * 只有捷運站查得到，公車站牌沒有站表，所以可以是 null。
+   */
+  originLat?: number | null
+  originLon?: number | null
+  destinationLat?: number | null
+  destinationLon?: number | null
 }
 
 type Row = {
@@ -50,6 +64,7 @@ type Row = {
   destination: string
   transport_mode: string
   line: string | null
+  city: string | null
   usual_days: string[] | null
   usual_time_start: string | null
   usual_time_end: string | null
@@ -63,6 +78,7 @@ function toRoute(row: Row): CommuteRoute {
     destination: row.destination,
     mode: row.transport_mode as TransportMode,
     line: row.line,
+    city: row.city,
     usualDays: row.usual_days ?? [],
     /* pg 的 time 型別回傳 'HH:MM:SS'，對外一律只到分鐘 */
     usualTimeStart: row.usual_time_start?.slice(0, 5) ?? null,
@@ -111,10 +127,15 @@ export async function saveCommuteRoute(
     destination,
     mode,
     line = null,
+    city = null,
     usualDays = [],
     usualTimeStart = null,
     usualTimeEnd = null,
     delayThresholdMinutes = 5,
+    originLat = null,
+    originLon = null,
+    destinationLat = null,
+    destinationLon = null,
   } = input
 
   return withTransaction(async (client) => {
@@ -122,20 +143,26 @@ export async function saveCommuteRoute(
 
     const { rows } = await client.query<Row>(
       `INSERT INTO commute_routes
-         (user_ref_id, origin, destination, transport_mode, line,
-          usual_days, usual_time_start, usual_time_end, delay_threshold_minutes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (user_ref_id, origin, destination, transport_mode, line, city,
+          usual_days, usual_time_start, usual_time_end, delay_threshold_minutes,
+          origin_lat, origin_lon, destination_lat, destination_lon)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (user_ref_id) DO UPDATE SET
          origin = EXCLUDED.origin,
          destination = EXCLUDED.destination,
          transport_mode = EXCLUDED.transport_mode,
          line = EXCLUDED.line,
+         city = EXCLUDED.city,
          usual_days = EXCLUDED.usual_days,
          usual_time_start = EXCLUDED.usual_time_start,
          usual_time_end = EXCLUDED.usual_time_end,
          delay_threshold_minutes = EXCLUDED.delay_threshold_minutes,
+         origin_lat = EXCLUDED.origin_lat,
+         origin_lon = EXCLUDED.origin_lon,
+         destination_lat = EXCLUDED.destination_lat,
+         destination_lon = EXCLUDED.destination_lon,
          updated_at = now()
-       RETURNING origin, destination, transport_mode, line,
+       RETURNING origin, destination, transport_mode, line, city,
                  usual_days, usual_time_start, usual_time_end,
                  delay_threshold_minutes, notification_enabled`,
       [
@@ -144,10 +171,15 @@ export async function saveCommuteRoute(
         destination,
         mode,
         line,
+        city,
         usualDays,
         usualTimeStart,
         usualTimeEnd,
         delayThresholdMinutes,
+        originLat,
+        originLon,
+        destinationLat,
+        destinationLon,
       ],
     )
 
@@ -186,7 +218,7 @@ export async function getCommuteRoute(
     if (!userRefId) return null
 
     const { rows } = await client.query<Row>(
-      `SELECT origin, destination, transport_mode, line,
+      `SELECT origin, destination, transport_mode, line, city,
               usual_days, usual_time_start, usual_time_end,
               delay_threshold_minutes, notification_enabled
          FROM commute_routes
@@ -221,7 +253,7 @@ export async function setNotificationEnabled(
       `UPDATE commute_routes
           SET notification_enabled = $2, updated_at = now()
         WHERE user_ref_id = $1
-      RETURNING origin, destination, transport_mode, line,
+      RETURNING origin, destination, transport_mode, line, city,
                 usual_days, usual_time_start, usual_time_end,
                 delay_threshold_minutes, notification_enabled`,
       [userRefId, enabled],

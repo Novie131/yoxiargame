@@ -13,9 +13,51 @@ import { userHeaders } from './userRef'
 export type ChatRole = 'user' | 'assistant'
 export type ChatMessage = { role: ChatRole; content: string }
 
+/*
+ * 對話裡的動作卡片。形狀必須跟後端 agent/index.ts 的 AgentCard 一致。
+ *
+ * 只有三種工具會產生卡片（路線規劃、附近任務、路況）—— 判斷標準是
+ * 「這個結果有沒有後續動作，或有沒有結構化到值得排版」。
+ * 天氣、通勤路線用一句話講得完，做成卡片只是裝飾。
+ */
+export type RoutePlanCard = {
+  kind: 'route_plan'
+  from: string
+  to: string
+  totalMinutes: number
+  transfers: number
+  legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
+}
+
+export type MissionsCard = {
+  kind: 'missions'
+  area: string
+  missions: Array<{
+    id: string
+    name: string
+    campaign: string
+    /* 相對於查詢的地區，不是相對於使用者 */
+    distanceFromAreaMeters: number
+    lat: number
+    lon: number
+  }>
+}
+
+export type TransitStatusCard = {
+  kind: 'transit_status'
+  line: string
+  mode: 'metro' | 'bus'
+  status: 'normal' | 'alert'
+  note: string
+  incidents: Array<{ title: string; description: string }>
+}
+
+export type AgentCard = RoutePlanCard | MissionsCard | TransitStatusCard
+
 export type AgentEvent =
   | { type: 'text'; value: string }
   | { type: 'commute_route'; route: CommuteRoute }
+  | { type: 'card'; card: AgentCard }
   | { type: 'error'; message: string }
 
 /* 一行 JSON → 事件。不認得的形狀一律忽略，後端加新事件時舊前端也不會壞。 */
@@ -37,6 +79,20 @@ function parseEvent(line: string): AgentEvent | null {
   if (type === 'commute_route') {
     const route = parseRoute((parsed as { route?: unknown }).route)
     return route ? { type: 'commute_route', route } : null
+  }
+  if (type === 'card') {
+    const card = (parsed as { card?: unknown }).card
+    /*
+     * 只認得的種類才放行。後端之後加新卡片時，舊版前端會安靜忽略而不是崩潰。
+     * 欄位不逐一驗證 —— 這是我們自己的後端，形狀由 AgentCard 型別保證。
+     */
+    if (typeof card === 'object' && card !== null) {
+      const kind = (card as { kind?: unknown }).kind
+      if (kind === 'route_plan' || kind === 'missions' || kind === 'transit_status') {
+        return { type: 'card', card: card as AgentCard }
+      }
+    }
+    return null
   }
   if (type === 'error') {
     const { message } = parsed as { message?: unknown }

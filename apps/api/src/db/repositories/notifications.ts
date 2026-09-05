@@ -103,6 +103,8 @@ export async function findWatchedRoutes(
             r.usual_days, r.usual_time_start, r.usual_time_end
        FROM commute_routes r
       WHERE r.notification_enabled
+        /* 只找捷運 —— 公車路線名剛好等於捷運線名時會誤判成同一條線 */
+        AND r.transport_mode IN ('metro', 'mixed')
         AND ($1::text IS NULL OR r.line = $1)`,
     [lineName],
   )
@@ -119,6 +121,58 @@ export async function findWatchedRoutes(
   }))
 }
 
+/** 目前有使用者在盯公車的縣市。輪詢只需要撈這些縣市的事件。 */
+export async function listWatchedBusCities(client: PoolClient): Promise<string[]> {
+  const { rows } = await client.query<{ city: string }>(
+    `SELECT DISTINCT city
+       FROM commute_routes
+      WHERE notification_enabled
+        AND city IS NOT NULL
+        AND transport_mode IN ('bus', 'mixed')`,
+  )
+  return rows.map((r) => r.city)
+}
+
+/**
+ * 某個縣市裡要盯這條公車路線的通勤設定。
+ *
+ * routeName 傳 null 代表這是沒有指定路線的全市事件，該縣市所有公車使用者都受影響。
+ */
+export async function findWatchedBusRoutes(
+  client: PoolClient,
+  city: string,
+  routeName: string | null,
+): Promise<WatchedRoute[]> {
+  const { rows } = await client.query<{
+    user_ref_id: string
+    origin: string
+    destination: string
+    line: string | null
+    usual_days: string[]
+    usual_time_start: string | null
+    usual_time_end: string | null
+  }>(
+    `SELECT r.user_ref_id, r.origin, r.destination, r.line,
+            r.usual_days, r.usual_time_start, r.usual_time_end
+       FROM commute_routes r
+      WHERE r.notification_enabled
+        AND r.transport_mode IN ('bus', 'mixed')
+        AND r.city = $1
+        AND ($2::text IS NULL OR r.line = $2)`,
+    [city, routeName],
+  )
+
+  return rows.map((r) => ({
+    userRefId: r.user_ref_id,
+    origin: r.origin,
+    destination: r.destination,
+    line: r.line,
+    usualDays: r.usual_days ?? [],
+    usualTimeStart: r.usual_time_start?.slice(0, 5) ?? null,
+    usualTimeEnd: r.usual_time_end?.slice(0, 5) ?? null,
+  }))
+}
+
 export type NotificationInput = {
   userRefId: string
   kind: string
@@ -128,7 +182,11 @@ export type NotificationInput = {
   actionLabel: string | null
   provider: string
   externalEventId: string
-  disruptionId: string
+  /*
+   * 對應的交通事件。地點推薦沒有事件可以指（它不是「發生了什麼」而是
+   * 「你可能會有興趣」），所以允許 null。
+   */
+  disruptionId: string | null
 }
 
 /**

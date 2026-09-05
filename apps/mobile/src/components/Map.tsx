@@ -32,6 +32,12 @@ export type MapMarker = {
   id: string
   position: Coordinate
   label?: string
+  /*
+   * 不符合目前篩選條件。畫淡而不是移除 ——
+   * 地圖上的東西突然清空會讓人以為壞了，而且「附近還有別的、只是不符合
+   * 你選的興趣」本身就是有用的資訊。
+   */
+  dimmed?: boolean
 }
 
 /*
@@ -53,6 +59,7 @@ export function Map({
   center,
   zoom,
   markers = [],
+  onMarkerClick,
   userLocation,
   controls = true,
   className,
@@ -60,6 +67,11 @@ export function Map({
   center: Coordinate
   zoom: number
   markers?: MapMarker[]
+  /*
+   * 有給就走自訂的詳情面板，不用 MapLibre 內建的 popup ——
+   * popup 只能放文字，任務詳情需要放可以按的選項。
+   */
+  onMarkerClick?: (id: string) => void
   /*
    * 使用者的真實位置。只有真的定位到才傳進來 ——
    * 傳退路座標會在畫面上變成一個假的「你在這裡」，那比不顯示更糟。
@@ -109,6 +121,10 @@ export function Map({
   /* 跟 viewRef 同理：地圖是非同步建立的，要用最新的值而不是閉包裡捕捉到的 */
   const controlsRef = useRef(controls)
   controlsRef.current = controls
+
+  /* 同理：標記建立時要呼叫到最新的回呼，不是第一次 render 捕捉到的 */
+  const onMarkerClickRef = useRef(onMarkerClick)
+  onMarkerClickRef.current = onMarkerClick
 
   /* 建立地圖。只跑一次 —— 中心與縮放的後續變動走下面那個 effect。 */
   useEffect(() => {
@@ -213,11 +229,27 @@ export function Map({
 
       for (const m of markerRefs.current) m.remove()
       markerRefs.current = markers.map((m) => {
-        const marker = new Marker({ color: '#D8654F' }).setLngLat([
-          m.position.lng,
-          m.position.lat,
-        ])
-        if (m.label) marker.setPopup(new Popup({ offset: 24 }).setText(m.label))
+        /*
+         * 透明度要用 MapLibre 的 opacity 選項，不能自己設行內樣式 ——
+         * 它有內建的遮蔽淡化機制，每次更新都會把元素的 opacity 寫成自己的值，
+         * 直接改 style.opacity 會被無聲蓋掉（踩過）。
+         */
+        const marker = new Marker({
+          color: m.dimmed ? '#C9CBD1' : '#D8654F',
+          opacity: m.dimmed ? '0.5' : '1',
+        }).setLngLat([m.position.lng, m.position.lat])
+
+        if (onMarkerClickRef.current) {
+          marker.getElement().style.cursor = 'pointer'
+          marker.getElement().addEventListener('click', (e) => {
+            /* 不要讓點擊穿透到地圖，否則會順便平移一下 */
+            e.stopPropagation()
+            onMarkerClickRef.current?.(m.id)
+          })
+        } else if (m.label) {
+          marker.setPopup(new Popup({ offset: 24 }).setText(m.label))
+        }
+
         return marker.addTo(map)
       })
     })()

@@ -40,20 +40,26 @@ export function HomeHeader({
       <div className="min-w-0">
         <h1 className="text-[22px] font-bold tracking-tight">{heading}</h1>
 
-        <div className="mt-1 flex items-center gap-1 text-[13px] text-muted">
+        {/*
+          * 不換行 + 溢出省略：地名、溫度、天氣、（未定位）四段加起來很容易超過寬度，
+          * 讓它 wrap 的話「（未定位）」會被擠成直的一個字一行（實際發生過）。
+          */}
+        <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden text-[13px] text-muted">
           {location ? (
             <>
               {location} <SunIcon />
             </>
           ) : weather.status === 'ready' ? (
             <>
-              <span>
+              <span className="truncate">
                 {weather.weather.location ?? '目前位置'} {weather.weather.temperatureC}°C
                 {weather.weather.condition !== '—' && ` ${weather.weather.condition}`}
               </span>
               <WeatherIcon weather={weather.weather} />
               {/* 定位被拒時給的是台北市中心，要講清楚，不要讓人以為是他所在地 */}
-              {!weather.precise && <span className="text-subtle">（未定位）</span>}
+              {!weather.precise && (
+                <span className="shrink-0 whitespace-nowrap text-subtle">（未定位）</span>
+              )}
             </>
           ) : weather.status === 'loading' ? (
             <span className="text-subtle">取得目前天氣…</span>

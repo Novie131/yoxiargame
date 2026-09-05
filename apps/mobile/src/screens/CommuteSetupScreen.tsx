@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { ChatComposer } from '@/components/ChatComposer'
+import { AgentCardView } from '@/components/AgentCards'
 import { AssistantMessage, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
 import { TransitStatus } from '@/components/TransitStatus'
 import { TransportCard } from '@/components/TransportCard'
 import { PinIcon } from '@/components/icons'
 import {
+  BUS_CITIES,
   metroLineOf,
   save,
   useCommuteRoute,
@@ -140,6 +142,7 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [mode, setMode] = useState<TransportMode>('metro')
+  const [city, setCity] = useState<string>(BUS_CITIES[0].value)
   const [days, setDays] = useState<string[]>(DEFAULT_DAYS)
   const [limitTime, setLimitTime] = useState(true)
   const [timeStart, setTimeStart] = useState(DEFAULT_TIME_START)
@@ -165,6 +168,8 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         origin,
         destination,
         mode,
+        /* 捷運不需要縣市，送 null 免得存一個會誤導人的值 */
+        city: mode === 'metro' ? null : city,
         /* 七天全選就等於不限制，送空陣列讓後端少存一份等價的資料 */
         usualDays: days.length === WEEKDAYS.length ? [] : days,
         usualTimeStart: limitTime ? timeStart : null,
@@ -236,6 +241,32 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         <p className="mt-1.5 text-[11px] text-subtle">
           火車與高鐵為跨縣市通勤預留，路線規劃與誤點通知尚未支援。
         </p>
+
+        {/*
+          * 公車一定要有縣市才查得到路線 ——「307」在台北與台中是不同的兩條線。
+          * 捷運目前只接台北捷運，所以不用問。
+          */}
+        {mode !== 'metro' && (
+          <div className="mt-3">
+            <span className="text-[12px] text-subtle">公車所屬縣市</span>
+            <div className="mt-1 grid grid-cols-3 gap-2">
+              {BUS_CITIES.map((c) => (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => setCity(c.value)}
+                  aria-pressed={city === c.value}
+                  className={[
+                    'rounded-xl py-2.5 text-[14px] font-semibold transition-colors',
+                    city === c.value ? 'bg-primary text-white' : 'bg-surface-3 text-muted',
+                  ].join(' ')}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="mt-4 border-t border-black/[.07] pt-3">
@@ -391,7 +422,9 @@ export function CommuteSetupScreen() {
             <UserMessage key={i}>{m.content}</UserMessage>
           ) : (
             <AssistantMessage key={i}>
-              {m.content || <span className="text-subtle">思考中...</span>}
+              {m.content || (m.cards?.length ? null : <span className="text-subtle">思考中...</span>)}
+              {/* 卡片跟文字是同一則回覆的兩個部分，所以放在同一個氣泡裡 */}
+              {m.cards?.map((card, ci) => <AgentCardView key={ci} card={card} />)}
             </AssistantMessage>
           ),
         )}

@@ -1,11 +1,21 @@
 import { hasDatabase, withTransaction } from '../db/client.ts'
+import { recommendMissions } from './mission-watch.ts'
 import {
+  findWatchedBusRoutes,
   findWatchedRoutes,
+  listWatchedBusCities,
   upsertDisruption,
   upsertNotification,
   type WatchedRoute,
 } from '../db/repositories/notifications.ts'
-import { hasTdxCredentials, listMetroIncidents, type MetroIncident } from './tdx.ts'
+import {
+  hasTdxCredentials,
+  isBusCity,
+  listBusIncidents,
+  listMetroIncidents,
+  type BusIncident,
+  type MetroIncident,
+} from './tdx.ts'
 
 /*
  * 主動監看捷運事件，命中使用者的通勤路線就產生通知。
@@ -38,6 +48,14 @@ const QUIET_END = '06:00'
 const DISRUPTION_TTL_HOURS = 6
 
 const PROVIDER = 'tdx'
+
+/*
+ * 公車事件的去重鍵要跟捷運分開。
+ *
+ * 兩邊的 AlertID 各自獨立編號，可能撞號 —— 撞到的話，使用者會因為一起
+ * 根本無關的捷運事件而收不到公車通知（唯一鍵擋掉了）。加前綴把兩個命名空間隔開。
+ */
+const busEventId = (city: string, eventId: string) => `bus:${city}:${eventId}`
 
 export type PollResult = {
   ok: boolean
@@ -184,14 +202,138 @@ export async function processIncidents(
   return result
 }
 
+/**
+ * 公車事件的分派。
+ *
+ * 跟捷運同一個模式，差別只在資料是分縣市的：先問資料庫「有哪些縣市有人在盯」，
+ * 再對每個縣市撈一次全市事件。所以外部成本是「縣市數」而不是「使用者數」。
+ */
+export async function processBusIncidents(
+  city: string,
+  incidents: BusIncident[],
+  at: Date = new Date(),
+): Promise<PollResult> {
+  const now = taipeiNow(at)
+  const result: PollResult = { ok: true, ...EMPTY, incidents: incidents.length }
+
+  for (const incident of incidents) {
+    const observedAt = new Date(incident.updatedAt)
+    if (Number.isNaN(observedAt.getTime())) {
+      console.warn(`[transit-watch] 公車事件 ${incident.eventId} 的時間無法解析，略過`)
+      continue
+    }
+    const expiresAt = new Date(observedAt.getTime() + DISRUPTION_TTL_HOURS * 3600_000)
+
+    /* 沒指定路線的事件視為全市通用，用一個 null 目標跑一輪 */
+    const targets: Array<string | null> =
+      incident.routes.length > 0 ? incident.routes : [null]
+
+    for (const routeName of targets) {
+      try {
+        await withTransaction(async (client) => {
+          const disruptionId = await upsertDisruption(client, {
+            provider: PROVIDER,
+            externalEventId: busEventId(city, incident.eventId),
+            /* 公車沒有 line_id 的概念，路線名直接當識別 */
+            lineId: routeName,
+            stationId: null,
+            transportMode: 'bus',
+            title: incident.title,
+            description: incident.description,
+            status: 'alert',
+            observedAt: observedAt.toISOString(),
+            expiresAt: expiresAt.toISOString(),
+          })
+
+          const routes = await findWatchedBusRoutes(client, city, routeName)
+
+          for (const route of routes) {
+            if (!shouldNotify(route, now)) {
+              result.skippedQuiet += 1
+              continue
+            }
+
+            const outcome = await upsertNotification(client, {
+              userRefId: route.userRefId,
+              kind: 'transit_disruption',
+              title: routeName ? `${routeName} 公車有異常` : '公車有異常',
+              body: incident.description || incident.title,
+              ...rideAction(route),
+              provider: PROVIDER,
+              externalEventId: busEventId(city, incident.eventId),
+              disruptionId,
+            })
+            if (outcome === 'created') result.created += 1
+            else result.updated += 1
+          }
+        })
+      } catch (error) {
+        console.error(`[transit-watch] 公車事件 ${incident.eventId} 寫入失敗：`, error)
+      }
+    }
+  }
+
+  return result
+}
+
+function merge(a: PollResult, b: PollResult): PollResult {
+  return {
+    ok: a.ok && b.ok,
+    reason: a.reason ?? b.reason,
+    incidents: a.incidents + b.incidents,
+    created: a.created + b.created,
+    updated: a.updated + b.updated,
+    skippedQuiet: a.skippedQuiet + b.skippedQuiet,
+  }
+}
+
 export async function pollTransit(at: Date = new Date()): Promise<PollResult> {
   if (!hasDatabase()) return { ok: false, reason: '未設定 DATABASE_URL', ...EMPTY }
   if (!hasTdxCredentials()) return { ok: false, reason: '未設定 TDX 金鑰', ...EMPTY }
 
+  let result: PollResult = { ok: true, ...EMPTY }
+
+  /* 捷運：一次撈全網 */
   try {
-    return await processIncidents(await listMetroIncidents(), at)
+    result = merge(result, await processIncidents(await listMetroIncidents(), at))
   } catch (error) {
-    console.error('[transit-watch] 取得事件失敗：', error)
-    return { ok: false, reason: '無法取得 TDX 事件', ...EMPTY }
+    console.error('[transit-watch] 取得捷運事件失敗：', error)
+    result = { ...result, ok: false, reason: '無法取得捷運事件' }
   }
+
+  /*
+   * 公車：只撈「真的有人在盯」的縣市。
+   *
+   * 這是刻意的順序 —— 先問資料庫再決定要打幾次 TDX。沒有人設定公車路線時
+   * 一次外部呼叫都不會發生，額度全部留給捷運。
+   */
+  try {
+    const cities = await withTransaction((client) => listWatchedBusCities(client))
+    for (const city of cities) {
+      if (!isBusCity(city)) {
+        console.warn(`[transit-watch] 略過不支援的縣市代碼「${city}」`)
+        continue
+      }
+      result = merge(result, await processBusIncidents(city, await listBusIncidents(city), at))
+    }
+  } catch (error) {
+    console.error('[transit-watch] 取得公車事件失敗：', error)
+    result = { ...result, ok: false, reason: result.reason ?? '無法取得公車事件' }
+  }
+
+  /*
+   * 反向導流。跟交通監看放在同一輪，因為兩者都是「主動找上使用者」，
+   * 而且都受同一套時段與靜音規則約束 —— 分成兩個排程只會讓那些規則
+   * 有兩份實作，遲早不一致。
+   *
+   * 它完全不打外部服務（純資料庫查詢），所以就算 TDX 那半失敗了也照跑。
+   */
+  const discovery = await recommendMissions(at)
+  if (!discovery.ok) {
+    result = { ...result, reason: result.reason ?? discovery.reason }
+  } else if (discovery.created > 0) {
+    result = { ...result, created: result.created + discovery.created }
+  }
+
+  return result
 }

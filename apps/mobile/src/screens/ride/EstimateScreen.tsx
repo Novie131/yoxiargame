@@ -1,11 +1,19 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { CarIcon, ChevronLeftIcon, CrosshairIcon } from '@/components/icons'
 
-/* 對應設計稿 frame：yoxi-ride-estimate（叫車 ②／預估車資）。此頁無 tab bar */
+/*
+ * 對應設計稿 frame：yoxi-ride-estimate（叫車 ②／預估車資）。此頁無 tab bar
+ *
+ * 下車地點會從網址參數帶入 —— 探索頁的任務面板按「叫車前往」時會帶著
+ * 任務名稱與座標過來，那就是「精準導流」實際落地的地方。沒有帶參數時
+ * 沿用設計稿的示範地點。
+ *
+ * 車程、抵達時間、車資仍是設計稿的數字：目前沒有接任何叫車估價來源。
+ */
 
 const stats = [
   { label: '預估車程', value: '約 15 分鐘' },
@@ -21,7 +29,11 @@ const carTypes = [
 
 export function EstimateScreen() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const [selected, setSelected] = useState('sedan')
+
+  /* 從探索頁導流過來時帶著任務名稱；沒有就用設計稿的示範地點 */
+  const destination = params.get('to')?.trim() || '台北松山機場'
 
   return (
     <div className="flex h-full flex-col">
@@ -64,7 +76,7 @@ export function EstimateScreen() {
               <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-primary" />
               <div className="-mt-1">
                 <p className="text-[12px] text-subtle">下車地點</p>
-                <p className="text-[15px] font-semibold">台北松山機場</p>
+                <p className="text-[15px] font-semibold">{destination}</p>
               </div>
             </div>
           </div>

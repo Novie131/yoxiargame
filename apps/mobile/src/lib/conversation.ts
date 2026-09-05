@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-import { streamAgentReply, type ChatMessage } from './agent'
+import { streamAgentReply, type AgentCard, type ChatMessage } from './agent'
 import { applyRoute } from './commute'
 
 /*
@@ -16,17 +16,32 @@ import { applyRoute } from './commute'
  * 只存在記憶體，重新啟動 App 就是新的對話。
  */
 
+/*
+ * 畫面用的訊息。比送給後端的多一個 cards —— 卡片是 UI 狀態，不能混進
+ * 送回 API 的對話紀錄裡（sanitize 只收 role 與 content，而且模型也不需要
+ * 再看一次自己剛產生的結構）。
+ */
+export type UiMessage = {
+  role: ChatMessage['role']
+  content: string
+  cards?: AgentCard[]
+}
+
 export type ConversationState = {
-  messages: ChatMessage[]
+  messages: UiMessage[]
   busy: boolean
   error: string | null
 }
+
+/** 送出去之前把 UI 專用的欄位剝掉 */
+const toApiMessages = (messages: UiMessage[]): ChatMessage[] =>
+  messages.map(({ role, content }) => ({ role, content }))
 
 export type Conversation = ReturnType<typeof createConversation>
 
 export function createConversation(intro?: string) {
   /* 開場白由前端寫死沒有問題 —— 它是介面文案，不是冒充成模型講過的話 */
-  const initial: ChatMessage[] = intro ? [{ role: 'assistant', content: intro }] : []
+  const initial: UiMessage[] = intro ? [{ role: 'assistant', content: intro }] : []
 
   let state: ConversationState = { messages: initial, busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -46,15 +61,25 @@ export function createConversation(intro?: string) {
   async function send(text: string) {
     if (state.busy) return
 
-    const next: ChatMessage[] = [...state.messages, { role: 'user', content: text }]
+    const next: UiMessage[] = [...state.messages, { role: 'user', content: text }]
     patch({ messages: [...next, { role: 'assistant', content: '' }], busy: true, error: null })
 
     try {
       let reply = ''
-      await streamAgentReply(next, (event) => {
+      /* 卡片跟文字是同一則助理訊息的兩個部分，所以一起累積 */
+      let cards: AgentCard[] = []
+      const render = () =>
+        patch({
+          messages: [...next, { role: 'assistant', content: reply, cards: [...cards] }],
+        })
+
+      await streamAgentReply(toApiMessages(next), (event) => {
         if (event.type === 'text') {
           reply += event.value
-          patch({ messages: [...next, { role: 'assistant', content: reply }] })
+          render()
+        } else if (event.type === 'card') {
+          cards = [...cards, event.card]
+          render()
         } else if (event.type === 'commute_route') {
           /*
            * 模型在這一輪把通勤路線存進後端了。同步到 store，行程頁才會
