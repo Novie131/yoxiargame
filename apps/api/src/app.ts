@@ -7,7 +7,7 @@ import { hasDatabase } from './db/client.ts'
 import type { TransportMode } from './db/repositories/commute.ts'
 import { listNotifications, markRead } from './db/repositories/notifications.ts'
 import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
-import { clearRoute, readRoute, saveRoute } from './services/commute.ts'
+import { clearRoute, readRoute, saveRoute, setNotifications } from './services/commute.ts'
 import { pollTransit } from './services/transit-watch.ts'
 import {
   getBusStatus,
@@ -38,7 +38,7 @@ app.use('/*', (c, next) => {
 
   return cors({
     origin: configured.length ? configured : '*',
-    allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     /* X-User-Ref 是前端帶的裝置識別，見 identity.ts —— 不是身分驗證 */
     allowHeaders: ['Content-Type', 'X-User-Ref'],
     maxAge: 86400,
@@ -299,6 +299,38 @@ app.post('/commute/route', async (c) => {
   } catch (error) {
     console.error('[commute/route:post]', error)
     return c.json({ error: '儲存通勤路線失敗' }, 502)
+  }
+})
+
+/*
+ * 局部更新。目前只支援開關通知 —— 起訖站要改的話走 POST 整筆覆寫，
+ * 因為那會連帶重推路線名，不是單純改一個欄位。
+ */
+app.patch('/commute/route', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: '請求內容不是合法的 JSON' }, 400)
+  }
+
+  const { notificationEnabled } = (body ?? {}) as { notificationEnabled?: unknown }
+  if (typeof notificationEnabled !== 'boolean') {
+    return c.json({ error: 'notificationEnabled 必須是布林值' }, 400)
+  }
+
+  try {
+    const route = await setNotifications(userRef, notificationEnabled)
+    /* 還沒設定路線就沒有東西可以開關，照實回 404，不要假裝成功 */
+    if (!route) return c.json({ error: '尚未設定通勤路線' }, 404)
+
+    c.header('Cache-Control', 'private, no-store')
+    return c.json({ route })
+  } catch (error) {
+    console.error('[commute/route:patch]', error)
+    return c.json({ error: '更新通知設定失敗' }, 502)
   }
 })
 

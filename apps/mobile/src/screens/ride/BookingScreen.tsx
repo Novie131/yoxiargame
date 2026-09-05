@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router'
 
-import mapBooking from '@/assets/maps/booking.png'
 import { BottomSheet } from '@/components/BottomSheet'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import {
@@ -25,7 +24,7 @@ export function BookingScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <MapBackdrop src={mapBooking}>
+      <MapBackdrop>
         <div className="absolute inset-x-4 top-3">
           <button
             type="button"

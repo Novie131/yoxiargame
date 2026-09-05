@@ -38,6 +38,13 @@ export type CommuteRoute = {
   usualDays: string[]
   usualTimeStart: string | null
   usualTimeEnd: string | null
+  /*
+   * 通勤異常通知的總開關。後端的輪詢是用這個欄位過濾的
+   * （transit-watch 的 WHERE notification_enabled），關掉就真的不會再產生通知。
+   */
+  notificationEnabled: boolean
+  /** 誤點幾分鐘才通知。目前還不能改，先讓設定頁顯示真實值而不是寫死的 5。 */
+  delayThresholdMinutes: number
 }
 
 /** 星期的順序與代碼，跟後端 app.ts 的 DAYS 一致 */
@@ -80,6 +87,13 @@ export function parseRoute(value: unknown): CommuteRoute | null {
       : [],
     usualTimeStart: text(r.usualTimeStart),
     usualTimeEnd: text(r.usualTimeEnd),
+    /*
+     * 對話串流傳回來的事件沒有這兩個欄位（模型不需要知道），
+     * 缺了就用後端建立路線時的預設值，不要當成關閉。
+     */
+    notificationEnabled: r.notificationEnabled !== false,
+    delayThresholdMinutes:
+      typeof r.delayThresholdMinutes === 'number' ? r.delayThresholdMinutes : 5,
   }
 }
 
@@ -226,6 +240,46 @@ export async function save(input: SaveCommuteRouteInput): Promise<SaveCommuteRou
     route,
     transferRequired: body.transferRequired === true,
     persisted: body.persisted !== false,
+  }
+}
+
+/**
+ * 開關通勤異常通知。
+ *
+ * 先改本機再送出：開關是使用者期待「按下去就變」的東西，等一趟往返會很鈍。
+ * 失敗就把狀態轉回去並拋出，讓畫面能說明發生什麼事 ——
+ * 通知這種東西默默沒設定成功是最糟的。
+ */
+export async function setNotificationEnabled(enabled: boolean): Promise<void> {
+  const previous = state.route
+  if (!previous) throw new Error('尚未設定通勤路線')
+
+  const optimistic = { ...previous, notificationEnabled: enabled }
+  writeCache(optimistic)
+  patch({ route: optimistic })
+
+  try {
+    const res = await fetch(`${API_URL}/commute/route`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...userHeaders() },
+      body: JSON.stringify({ notificationEnabled: enabled }),
+    })
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(detail?.error ?? `伺服器回應 ${res.status}`)
+    }
+
+    const body = (await res.json()) as { route?: unknown }
+    const route = parseRoute(body.route)
+    if (route) {
+      writeCache(route)
+      patch({ route })
+    }
+  } catch (error) {
+    /* 沒改成功就不要留著一個看起來已經改好的畫面 */
+    writeCache(previous)
+    patch({ route: previous })
+    throw error
   }
 }
 

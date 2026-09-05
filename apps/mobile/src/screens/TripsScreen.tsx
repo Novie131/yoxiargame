@@ -229,18 +229,36 @@ export function TripsScreen() {
           <EmptyRouteCard onSetup={setup} />
         )}
 
-        {configured && (
-          <div className="flex items-center gap-3 rounded-2xl bg-primary-tint px-4 py-3.5">
+        {/*
+          * 這張卡原本只要有路線就寫「已開啟通勤提醒」。
+          * 設定頁可以關掉通知之後，那就變成謊話了 —— 使用者明明關了，
+          * 行程頁還跟他說開著。現在照著 notificationEnabled 顯示實際狀態。
+          */}
+        {route && (
+          <button
+            type="button"
+            onClick={() => navigate('/settings')}
+            className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left"
+            style={{
+              background: route.notificationEnabled
+                ? 'var(--color-primary-tint)'
+                : 'var(--color-surface-2)',
+            }}
+          >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface text-[16px]">
-              ✨
+              {route.notificationEnabled ? '✨' : '🔕'}
             </span>
             <div>
-              <p className="text-[14px] font-semibold">已開啟通勤提醒</p>
+              <p className="text-[14px] font-semibold">
+                {route.notificationEnabled ? '已開啟通勤提醒' : '通勤提醒已關閉'}
+              </p>
               <p className="mt-0.5 text-[12px] text-subtle">
-                若捷運延誤，會即時提供計程車替代方案
+                {route.notificationEnabled
+                  ? '捷運有事件通報時會通知你，並提供計程車替代方案'
+                  : '目前不會收到路線異常的通知，點此前往設定'}
               </p>
             </div>
-          </div>
+          </button>
         )}
       </div>
     </div>

@@ -104,6 +104,62 @@ type Cached<T> = { at: number; value: T }
 const cache = new Map<string, Cached<unknown>>()
 const inFlight = new Map<string, Promise<unknown>>()
 
+/*
+ * 跨 isolate 的共用快取。
+ *
+ * 這是必要的，不是最佳化。上面那個 `cache` 是模組層的 Map，在 Node 上沒問題
+ * （單一程序），但部署到 Cloudflare Workers 之後，每個 isolate 都有自己的一份 ——
+ * 快取命中率大幅下降，而 callTimes 那個配額守門也各算各的，
+ * 等於每分鐘 5 次的額度根本沒有東西在守。
+ *
+ * Workers 的 Cache API（caches.default）是同一個機房內共用的，而且不需要
+ * 任何綁定或設定，所以拿它當第二層。Node 上沒有這個全域物件，就只用記憶體 ——
+ * 那邊本來就是單一程序，記憶體快取已經是正確的。
+ *
+ * 注意：這只解決「重複請求」。配額計數要跨 isolate 正確仍需要
+ * Durable Object（KV 是最終一致的，做不了原子遞增），那是另一件事。
+ * 但共用快取之後實際打到 TDX 的次數會少一個數量級，風險小很多。
+ */
+function sharedCache(): Cache | null {
+  /* Node 沒有 caches，Workers 才有 */
+  const c = (globalThis as { caches?: { default?: Cache } }).caches
+  return c?.default ?? null
+}
+
+/* 快取的鍵必須是完整網址，這個網域不會真的被請求，只是當命名空間用 */
+const CACHE_ORIGIN = 'https://tdx-cache.internal'
+
+async function readShared<T>(path: string): Promise<T | null> {
+  const store = sharedCache()
+  if (!store) return null
+  try {
+    const res = await store.match(`${CACHE_ORIGIN}/${path}`)
+    return res ? ((await res.json()) as T) : null
+  } catch {
+    /* 快取壞掉不該讓請求失敗，當作沒命中即可 */
+    return null
+  }
+}
+
+async function writeShared(path: string, value: unknown, ttl: number): Promise<void> {
+  const store = sharedCache()
+  if (!store) return
+  try {
+    await store.put(
+      `${CACHE_ORIGIN}/${path}`,
+      new Response(JSON.stringify(value), {
+        headers: {
+          'Content-Type': 'application/json',
+          /* Cache API 靠這個標頭決定存活時間，跟記憶體那層的 TTL 對齊 */
+          'Cache-Control': `max-age=${Math.floor(ttl / 1000)}`,
+        },
+      }),
+    )
+  } catch {
+    /* 存不進去就下次再打一次，不影響正確性 */
+  }
+}
+
 async function get<T>(path: string, ttl: number): Promise<T> {
   const hit = cache.get(path)
   if (hit && Date.now() - hit.at < ttl) return hit.value as T
@@ -113,6 +169,16 @@ async function get<T>(path: string, ttl: number): Promise<T> {
   if (running) return running as Promise<T>
 
   const task = (async () => {
+    /*
+     * 先問共用快取。在 Workers 上這一層會擋掉絕大多數的重複請求 ——
+     * 沒有它的話，每個 isolate 都會自己去打一次 TDX。
+     */
+    const shared = await readShared<T>(path)
+    if (shared !== null) {
+      cache.set(path, { at: Date.now(), value: shared })
+      return shared
+    }
+
     /* 配額用完時退回過期快取；連快取都沒有才報錯 */
     if (!budgetAvailable()) {
       if (hit) return hit.value as T
@@ -139,6 +205,7 @@ async function get<T>(path: string, ttl: number): Promise<T> {
 
     const value = (await res.json()) as T
     cache.set(path, { at: Date.now(), value })
+    await writeShared(path, value, ttl)
     return value
   })()
 

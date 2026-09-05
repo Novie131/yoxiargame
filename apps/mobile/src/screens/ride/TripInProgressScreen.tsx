@@ -1,4 +1,3 @@
-import mapTrip from '@/assets/maps/trip.png'
 import { BottomSheet } from '@/components/BottomSheet'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { AlertIcon, ShieldIcon } from '@/components/icons'
@@ -8,7 +7,7 @@ import { AlertIcon, ShieldIcon } from '@/components/icons'
 export function TripInProgressScreen() {
   return (
     <div className="flex h-full flex-col">
-      <MapBackdrop src={mapTrip}>
+      <MapBackdrop>
         <div className="absolute inset-x-4 top-3 flex items-center justify-between rounded-full bg-surface px-4 py-3 shadow-[0_3px_14px_rgba(22,32,55,.14)]">
           <span className="flex items-center gap-2 text-[15px] font-semibold">
             <span className="h-2.5 w-2.5 rounded-full bg-primary" />

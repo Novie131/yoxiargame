@@ -3,6 +3,7 @@ import {
   deleteCommuteRoute,
   getCommuteRoute,
   saveCommuteRoute,
+  setNotificationEnabled,
   type CommuteRoute,
   type TransportMode,
 } from '../db/repositories/commute.ts'
@@ -134,6 +135,20 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
 export async function readRoute(userRef: string): Promise<CommuteRoute | null> {
   if (!hasDatabase()) return null
   return getCommuteRoute(userRef, USER_REF_PROVIDER)
+}
+
+/**
+ * 開關通勤異常通知。回傳 null 代表還沒有通勤路線可以開關。
+ *
+ * 沒有資料庫時（demo 部署）也回 null —— 那種情況本來就不會產生通知，
+ * 假裝設定成功只會讓使用者以為關掉了。
+ */
+export async function setNotifications(
+  userRef: string,
+  enabled: boolean,
+): Promise<CommuteRoute | null> {
+  if (!hasDatabase()) return null
+  return setNotificationEnabled(userRef, USER_REF_PROVIDER, enabled)
 }
 
 export async function clearRoute(userRef: string): Promise<boolean> {

@@ -197,6 +197,46 @@ export async function getCommuteRoute(
   })
 }
 
+/**
+ * 開關通勤異常通知。
+ *
+ * transit-watch 的輪詢是用 `WHERE r.notification_enabled` 過濾的，
+ * 所以關掉之後就真的不會再產生通知，不是只把畫面上的開關撥過去。
+ *
+ * favorite_stations 一併同步 —— 那張表是站點層級的通知設定，
+ * 兩邊不一致的話，之後接站點通知時會拿到互相矛盾的狀態。
+ *
+ * 回傳 null 代表這個人根本還沒設定通勤路線，沒有東西可以開關。
+ */
+export async function setNotificationEnabled(
+  externalUserRef: string,
+  provider: string,
+  enabled: boolean,
+): Promise<CommuteRoute | null> {
+  return withTransaction(async (client) => {
+    const userRefId = await findUserRefId(client, provider, externalUserRef)
+    if (!userRefId) return null
+
+    const { rows } = await client.query<Row>(
+      `UPDATE commute_routes
+          SET notification_enabled = $2, updated_at = now()
+        WHERE user_ref_id = $1
+      RETURNING origin, destination, transport_mode, line,
+                usual_days, usual_time_start, usual_time_end,
+                delay_threshold_minutes, notification_enabled`,
+      [userRefId, enabled],
+    )
+    if (!rows[0]) return null
+
+    await client.query(
+      'UPDATE favorite_stations SET notification_enabled = $2, updated_at = now() WHERE user_ref_id = $1',
+      [userRefId, enabled],
+    )
+
+    return toRoute(rows[0])
+  })
+}
+
 /** 回傳是否真的刪到東西，讓呼叫端能分辨 404 與 204 */
 export async function deleteCommuteRoute(
   externalUserRef: string,

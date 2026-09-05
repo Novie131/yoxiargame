@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import eventGoFest from '@/assets/maps/event-gofest.png'
 import { HomeHeader } from '@/components/HomeHeader'
@@ -56,6 +56,7 @@ const events = [
 export function ExploreScreen() {
   const [selected, setSelected] = useState<string[]>(['pokemon-go'])
 
+  const mapRef = useRef<HTMLDivElement>(null)
   const location = useUserLocation()
   /*
    * 沒選城市時看使用者的位置。選了才切到那個城市，
@@ -109,10 +110,14 @@ export function ExploreScreen() {
           })}
         </div>
 
-        <p className="mt-4 text-[13px] text-subtle">正在為你生成最新活動......</p>
+        {/*
+          * 原本這裡寫「正在為你生成最新活動......」，但它是一段永遠不會結束的
+          * 靜態文字 —— 背後沒有任何請求。等 missions 接上來、真的有在查詢時
+          * 再放載入狀態；在那之前不要讓畫面假裝正在忙。
+          */}
       </section>
 
-      <section className="mt-3 px-4">
+      <section ref={mapRef} className="mt-3 px-4">
         <div className="overflow-hidden rounded-2xl bg-surface shadow-[0_2px_14px_rgba(22,32,55,.07)]">
           <div className="flex items-center justify-between gap-3 px-4 pb-2.5 pt-3.5">
             <h3 className="text-[17px] font-bold">探索地圖</h3>
@@ -187,21 +192,33 @@ export function ExploreScreen() {
             </article>
           ))}
 
-          <div className="mt-3 flex justify-center gap-1.5">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className={[
-                  'h-1.5 rounded-full transition-all',
-                  i === 0 ? 'w-5 bg-primary' : 'w-1.5 bg-line',
-                ].join(' ')}
-              />
-            ))}
-          </div>
+          {/*
+            * 分頁圓點原本固定畫三顆，但活動只有一筆，而且點了也不能翻頁。
+            * 改成跟著實際筆數走：只有一筆就不畫，有多筆時才是有意義的指示器。
+            */}
+          {events.length > 1 && (
+            <div className="mt-3 flex justify-center gap-1.5">
+              {events.map((e, i) => (
+                <span
+                  key={e.id}
+                  className={[
+                    'h-1.5 rounded-full transition-all',
+                    i === 0 ? 'w-5 bg-primary' : 'w-1.5 bg-line',
+                  ].join(' ')}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
+        {/*
+          * 這顆鈕原本按了沒有任何反應。目前這一頁真正能「開始探索」的東西
+          * 就是地圖，所以先讓它捲到地圖 —— 等 missions 接上來、有活動詳情頁
+          * 之後再改成導頁。做不到的事不要放按鈕，但已經在的按鈕也不必是死的。
+          */}
         <button
           type="button"
+          onClick={() => mapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
           className="mt-4 w-full rounded-full bg-primary py-3.5 text-[16px] font-bold tracking-[.4em] text-white transition-transform active:scale-[.98]"
         >
           開始探索

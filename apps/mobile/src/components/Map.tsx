@@ -54,6 +54,7 @@ export function Map({
   zoom,
   markers = [],
   userLocation,
+  controls = true,
   className,
 }: {
   center: Coordinate
@@ -64,6 +65,19 @@ export function Map({
    * 傳退路座標會在畫面上變成一個假的「你在這裡」，那比不顯示更糟。
    */
   userLocation?: Coordinate | null
+  /*
+   * 內建的縮放／全螢幕／定位鈕。叫車流程要關掉 ——
+   * 那幾頁的右上角已經有自己的按鈕，兩套疊在一起會互相蓋住。
+   */
+  controls?: boolean
+  /*
+   * 要給明確的尺寸（h-[340px]、h-full…）。
+   *
+   * 不要用 absolute inset-0 來撐開它：MapLibre 的 CSS 有
+   * .maplibregl-map { position: relative }，而它是動態載入的、排在 Tailwind
+   * 之後，同權重下後載入的勝 —— absolute 會被蓋掉、inset-0 失效，
+   * 地圖高度塌成 0，畫面上看起來就是一塊空白。要絕對定位請包一層外層 div。
+   */
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -91,6 +105,10 @@ export function Map({
    */
   const viewRef = useRef({ center, zoom })
   viewRef.current = { center, zoom }
+
+  /* 跟 viewRef 同理：地圖是非同步建立的，要用最新的值而不是閉包裡捕捉到的 */
+  const controlsRef = useRef(controls)
+  controlsRef.current = controls
 
   /* 建立地圖。只跑一次 —— 中心與縮放的後續變動走下面那個 effect。 */
   useEffect(() => {
@@ -129,21 +147,23 @@ export function Map({
           attributionControl: { compact: true },
         })
 
-        map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
-        map.addControl(new FullscreenControl(), 'top-right')
+        if (controlsRef.current) {
+          map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
+          map.addControl(new FullscreenControl(), 'top-right')
         /*
          * 「我的位置」。跟 Google 地圖一樣是地圖上最常按的鈕。
          * showUserLocation 關掉 —— 藍點由上面的 userLocation 統一負責，
          * 開著的話按下去會多出第二個點。
          */
-        map.addControl(
-          new GeolocateControl({
-            positionOptions: { enableHighAccuracy: true },
-            trackUserLocation: true,
-            showUserLocation: false,
-          }),
-          'top-right',
-        )
+          map.addControl(
+            new GeolocateControl({
+              positionOptions: { enableHighAccuracy: true },
+              trackUserLocation: true,
+              showUserLocation: false,
+            }),
+            'top-right',
+          )
+        }
 
         /* 圖磚拿不到時不要留一塊空白，換成可讀的說明 */
         map.on('error', (e) => {

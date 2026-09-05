@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router'
 
-import mapDriver from '@/assets/maps/driver.png'
 import { BottomSheet } from '@/components/BottomSheet'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import {
@@ -19,7 +18,7 @@ export function DriverArrivingScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <MapBackdrop src={mapDriver}>
+      <MapBackdrop>
         {/* 真實流程是司機抵達後自動進入行程中。原型裡點這條狀態列代替。 */}
         <button
           type="button"

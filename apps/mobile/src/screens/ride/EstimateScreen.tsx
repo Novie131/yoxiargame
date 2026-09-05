@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
-import mapEstimate from '@/assets/maps/estimate.png'
 import { BottomSheet } from '@/components/BottomSheet'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { CarIcon, ChevronLeftIcon, CrosshairIcon } from '@/components/icons'
@@ -26,7 +25,7 @@ export function EstimateScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <MapBackdrop src={mapEstimate}>
+      <MapBackdrop>
         <button
           type="button"
           aria-label="返回"
