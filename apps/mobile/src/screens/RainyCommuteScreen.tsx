@@ -23,7 +23,7 @@ export function RainyCommuteScreen() {
       <div className="bg-surface">
         <HomeHeader
           greeting="午安，志明"
-          location="台北市信義區 26°C"
+          location="臺北市信義區 26°C"
           alert={{ title: '雨天通勤提醒', body: '路面濕滑改搭乘計程車' }}
         />
       </div>

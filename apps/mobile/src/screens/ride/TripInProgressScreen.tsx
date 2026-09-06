@@ -22,7 +22,7 @@ export function TripInProgressScreen() {
           <p className="text-[12px] text-subtle">目的地</p>
           <p className="mt-0.5 flex items-center gap-2 text-[20px] font-bold">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary" />
-            台北101 (Taipei 101)
+            臺北101 (Taipei 101)
           </p>
           <p className="mt-0.5 pl-[18px] text-[13px] text-subtle">
             信義區信義路五段7號

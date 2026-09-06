@@ -78,6 +78,10 @@ yoxi 叫車估價 API。
 退路座標（信義區）**不會**被當成使用者位置送給後端 —— 那會讓人在台中卻拿到
 從市政府站出發的路線。
 
+`plan_route` 自己會把起訖點的天氣一起查回來，畫面同時排出路線卡與天氣卡。
+刻意不靠模型再呼叫一次 `get_weather` —— 實測它常常呼叫了卻不帶地點，
+於是退回去用定位，使用者明明說了「西門町到北車」卻被要求開啟定位。
+
 路徑規劃用 **Yen's K-Shortest Loopless Paths + Dijkstra**，回傳建議路線與備選。
 備選會濾掉「又慢又要多轉一次」的路（Pareto 支配），所以常常是空的，那是正確的。
 不用 A\* 的理由寫在 `services/route-planner.ts` 的檔頭。
@@ -89,6 +93,8 @@ yoxi 叫車估價 API。
 端點為 `/transit/metro?line=` 與 `/transit/bus?route=&city=&stop=`。
 `/transit/plan?from=&to=` 回傳最佳路線（欄位攤平在最外層）加上 `alternatives`；
 路網圖快取一天，這支不吃 TDX 額度。`/geocode?q=` 是地名轉座標。
+站名比對會把「臺」摺成「台」（TDX 站表寫的是「台北車站」），
+所以兩種寫法都查得到。
 
 TDX 實測額度是**每分鐘 5 次**，不是文件寫的每秒 50 次，所以
 `services/tdx.ts` 的快取、併發合流與配額守門都不能拿掉。

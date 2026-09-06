@@ -11,7 +11,7 @@ import { API_URL } from './api'
  * 三種來源，優先序就是這個順序：
  *   manual    使用者自己指定的地點。定位被拒時他總得有辦法告訴我們他在哪。
  *   gps       瀏覽器定位。
- *   fallback  兩者都沒有時的退路（台北市信義區）。
+ *   fallback  兩者都沒有時的退路（臺北市信義區）。
  *
  * precise 這個旗標很重要：畫面可以用退路座標決定要看哪裡，但**不能**在那個
  * 座標上畫一個「你在這裡」的點，那是在騙人。手動指定的地點 precise 也是
@@ -36,7 +36,7 @@ export type UserLocation = {
   label: string | null
 }
 
-/* 台北市信義區（市政府一帶）。定位拿不到又沒手動指定時的預設位置。 */
+/* 臺北市信義區（市政府一帶）。定位拿不到又沒手動指定時的預設位置。 */
 export const FALLBACK_LOCATION: UserLocation = {
   lat: 25.0375,
   lon: 121.5637,
@@ -45,7 +45,7 @@ export const FALLBACK_LOCATION: UserLocation = {
   label: null,
 }
 
-export const FALLBACK_LABEL = '台北市信義區'
+export const FALLBACK_LABEL = '臺北市信義區'
 
 /* 跟天氣的快取時間一致，切分頁回來不用重新要一次權限 */
 const TTL_MS = 10 * 60 * 1000

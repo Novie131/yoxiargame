@@ -101,7 +101,7 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
    * 流程照樣走得完、畫面照樣更新，只是重開 App 就沒了。
    */
   /*
-   * 公車一定要有城市才查得到路線；沒給就當台北（原本全域的隱含預設）。
+   * 公車一定要有城市才查得到路線；沒給就當臺北（原本全域的隱含預設）。
    * 捷運不需要，留 null 免得存進一個會誤導人的值。
    */
   const city =

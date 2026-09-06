@@ -1,6 +1,6 @@
 import { CloudIcon, MoonIcon, RainIcon, SunIcon } from './icons'
 import { greeting as greetingFor } from '@/lib/datetime'
-import { requestLocation, useLocationState } from '@/lib/location'
+import { clearManualLocation, requestLocation, useLocationState } from '@/lib/location'
 import { useMember } from '@/lib/member'
 import { useWeather, type Weather } from '@/lib/weather'
 
@@ -38,61 +38,85 @@ export function HomeHeader({
     alert !== undefined ? alert : weather.status === 'ready' ? weather.weather.advice : null
 
   return (
-    <header className="flex items-start justify-between gap-3 px-5 pt-3 pb-4">
-      <div className="min-w-0">
-        <h1 className="text-[22px] font-bold tracking-tight">{heading}</h1>
+    <header className="px-5 pt-3 pb-4">
+      {/*
+        * 提示卡不能是 shrink-0：它的內文是動態的（「約 01:00 起降雨機率 35%，
+        * 建議帶傘」比原本的「記得帶傘」長得多），不讓它退讓的話會把左邊那欄
+        * 壓到零寬，地名跟溫度就會被擠成一個字一行（實際發生過）。
+        * 所以給它上限並讓內文自己截斷。
+        */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[22px] font-bold tracking-tight">{heading}</h1>
 
-        {/*
-          * 不換行 + 溢出省略：地名、溫度、天氣、（未定位）四段加起來很容易超過寬度，
-          * 讓它 wrap 的話「（未定位）」會被擠成直的一個字一行（實際發生過）。
-          */}
-        <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden text-[13px] text-muted">
-          {location ? (
-            <>
-              {location} <SunIcon />
-            </>
-          ) : weather.status === 'ready' ? (
-            <>
-              <span className="truncate">
-                {weather.weather.location ?? '目前位置'} {weather.weather.temperatureC}°C
-                {weather.weather.condition !== '—' && ` ${weather.weather.condition}`}
-              </span>
-              <WeatherIcon weather={weather.weather} />
-              {/*
-                * 定位被拒時給的是台北市中心，要講清楚，不要讓人以為是他所在地。
-                * 而且要**可以按** —— 只寫「（未定位）」等於告訴使用者有問題卻不給出路，
-                * 他得自己想到去系統設定裡翻。按一下就重新要一次權限。
-                */}
-              {!weather.precise &&
-                (status === 'manual' ? (
-                  <span className="shrink-0 whitespace-nowrap text-subtle">（手動指定）</span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void requestLocation()}
-                    className="shrink-0 whitespace-nowrap text-subtle underline underline-offset-2"
-                  >
-                    （未定位，開啟）
-                  </button>
-                ))}
-            </>
-          ) : weather.status === 'loading' ? (
-            <span className="text-subtle">取得目前天氣…</span>
-          ) : (
-            <span className="text-subtle">天氣資料暫時無法取得</span>
-          )}
+          {/* 不換行 + 溢出省略：地名、溫度、天氣三段加起來很容易超過寬度 */}
+          <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden text-[13px] text-muted">
+            {location ? (
+              <>
+                {location} <SunIcon />
+              </>
+            ) : weather.status === 'ready' ? (
+              <>
+                <span className="min-w-0 truncate">
+                  {weather.weather.location ?? '目前位置'} {weather.weather.temperatureC}°C
+                  {weather.weather.condition !== '—' && ` ${weather.weather.condition}`}
+                </span>
+                <span className="shrink-0">
+                  <WeatherIcon weather={weather.weather} />
+                </span>
+              </>
+            ) : weather.status === 'loading' ? (
+              <span className="text-subtle">取得目前天氣…</span>
+            ) : (
+              <span className="text-subtle">天氣資料暫時無法取得</span>
+            )}
+          </div>
         </div>
+
+        {card && (
+          <div className="flex max-w-[52%] items-center gap-2 rounded-2xl bg-surface px-3 py-2 shadow-[0_2px_10px_rgba(22,32,55,.10)]">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning-tint">
+              <SunIcon />
+            </span>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-[13px] font-semibold">{card.title}</p>
+              <p className="truncate text-[11px] text-subtle">{card.body}</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {card && (
-        <div className="flex shrink-0 items-center gap-2 rounded-2xl bg-surface px-3 py-2 shadow-[0_2px_10px_rgba(22,32,55,.10)]">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning-tint">
-            <SunIcon />
-          </span>
-          <div className="leading-tight">
-            <p className="text-[13px] font-semibold">{card.title}</p>
-            <p className="text-[11px] text-subtle">{card.body}</p>
-          </div>
+      {/*
+        * 定位狀態獨立一行。
+        *
+        * 塞進上面那行天氣裡會跟地名搶寬度，兩邊都被截斷（踩過）。而且這件事
+        * 本來就值得一整行：顯示的地名是臺北市中心的退路座標，不是使用者所在地，
+        * 不講清楚就是在騙他。
+        *
+        * 被拒絕過就不要再給「開啟定位」按鈕 —— 瀏覽器不會再問第二次，
+        * 按了沒反應比沒有按鈕更糟。那種情況指路去對話裡手動指定。
+        */}
+      {!location && weather.status === 'ready' && !weather.precise && (
+        <div className="mt-1 text-[12px]">
+          {status === 'manual' ? (
+            <button
+              type="button"
+              onClick={clearManualLocation}
+              className="text-subtle underline underline-offset-2"
+            >
+              目前是手動指定的位置，改用定位
+            </button>
+          ) : status === 'denied' ? (
+            <span className="text-subtle">未定位——可以在下面的對話裡直接說你在哪</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void requestLocation()}
+              className="text-subtle underline underline-offset-2"
+            >
+              未定位，點這裡開啟定位
+            </button>
+          )}
         </div>
       )}
     </header>

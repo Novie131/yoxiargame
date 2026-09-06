@@ -12,7 +12,7 @@ export function UvAlertScreen() {
     <div className="flex h-full flex-col" style={{ background: 'var(--color-page-warm)' }}>
       <HomeHeader
         greeting="午安，志明"
-        location="台北市信義區 34°C"
+        location="臺北市信義區 34°C"
         alert={{ title: '紫外線通勤提醒', body: '過量級防曬對策' }}
       />
 

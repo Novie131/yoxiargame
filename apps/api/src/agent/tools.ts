@@ -18,7 +18,7 @@ import {
   haversineMeters,
   isBusCity,
 } from '../services/tdx.ts'
-import { getWeather } from '../services/weather.ts'
+import { getWeather, type Weather } from '../services/weather.ts'
 
 /*
  * Agent 可用的工具。
@@ -55,6 +55,34 @@ const describe = (place: ResolvedPlace) => ({
   station: place.station?.name ?? null,
   walk_minutes_to_station: place.station?.walkMinutes ?? null,
   metro_reachable: place.metroReachable,
+})
+
+/*
+ * 天氣 → 給模型看的形狀。get_weather 與 plan_route 共用同一份，
+ * 兩邊的欄位名不一致的話，agent/index.ts 的卡片轉換就得寫兩套。
+ */
+const weatherPayload = (w: Weather, fallbackPlace: string) => ({
+  place: w.location ?? fallbackPlace,
+  data_source: 'open-meteo',
+  temperature_c: w.temperatureC,
+  feels_like_c: w.feelsLikeC,
+  humidity_percent: w.humidity,
+  condition: w.condition,
+  precipitation_mm: w.precipitationMm,
+  uv_index: w.uvIndex,
+  uv_level: w.uvLevel,
+  /* 未來幾小時。回答「等一下要不要帶傘」全靠這一段。 */
+  forecast: w.outlook && {
+    hours: w.outlook.hours,
+    min_temperature_c: w.outlook.minTemperatureC,
+    max_temperature_c: w.outlook.maxTemperatureC,
+    max_precipitation_probability: w.outlook.maxPrecipitationProbability,
+    rain_starts_at: w.outlook.rainStartsAt,
+    max_uv_index: w.outlook.maxUvIndex,
+  },
+  /* 已經按重要性排好，第一則就是最該講的 */
+  advice: w.advices.map((a) => ({ kind: a.kind, title: a.title, body: a.body })),
+  observed_at: w.observedAt,
 })
 
 const sharedTools = {
@@ -189,7 +217,7 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           .string()
           .optional()
           .describe(
-            '地點，例如「信義區」「台北車站」。' +
+            '地點，例如「信義區」「臺北車站」。' +
               '使用者問的是他所在地的天氣（「今天天氣如何」「等一下會下雨嗎」）時' +
               '**不要帶**這個參數，系統會用他的定位。',
           ),
@@ -208,29 +236,7 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           }
 
           const w = await getWeather(resolved.lat, resolved.lon)
-          return {
-            place: w.location ?? resolved.label,
-            data_source: 'open-meteo',
-            temperature_c: w.temperatureC,
-            feels_like_c: w.feelsLikeC,
-            humidity_percent: w.humidity,
-            condition: w.condition,
-            precipitation_mm: w.precipitationMm,
-            uv_index: w.uvIndex,
-            uv_level: w.uvLevel,
-            /* 未來幾小時。回答「等一下要不要帶傘」全靠這一段。 */
-            forecast: w.outlook && {
-              hours: w.outlook.hours,
-              min_temperature_c: w.outlook.minTemperatureC,
-              max_temperature_c: w.outlook.maxTemperatureC,
-              max_precipitation_probability: w.outlook.maxPrecipitationProbability,
-              rain_starts_at: w.outlook.rainStartsAt,
-              max_uv_index: w.outlook.maxUvIndex,
-            },
-            /* 已經按重要性排好，第一則就是最該講的 */
-            advice: w.advices.map((a) => ({ kind: a.kind, title: a.title, body: a.body })),
-            observed_at: w.observedAt,
-          }
+          return weatherPayload(w, resolved.label)
         } catch (error) {
           console.error('[get_weather]', error)
           return { place: place ?? null, error: '天氣服務暫時無法取得' }
@@ -248,11 +254,11 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           .string()
           .optional()
           .describe(
-            '出發地，例如「板橋」「台北 101」。' +
+            '出發地，例如「板橋」「臺北101」。' +
               '使用者說「從我這裡」「目前位置」或根本沒講出發地時**不要帶**，' +
               '系統會用他的定位。',
           ),
-        to: z.string().describe('目的地，例如「台北車站」「市政府」「大安森林公園」'),
+        to: z.string().describe('目的地，例如「臺北車站」「市政府」「大安森林公園」'),
       }),
       /*
        * 時間的組成要講清楚，模型才不會把它說成保證值：
@@ -308,10 +314,29 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           const walk = origin.station.walkMinutes + destination.station.walkMinutes
           const plans = [routes.best, ...routes.alternatives]
 
+          /*
+           * 天氣直接在這裡查，不要指望模型自己再呼叫一次 get_weather。
+           *
+           * 實測它常常呼叫了卻**不帶 place**，於是退回去用定位；使用者明明
+           * 已經說了「西門町到北車」，畫面卻跳出「需要你的位置才能查天氣」。
+           * 使用者要出門，起訖點的天氣就是這趟行程的一部分，由工具自己保證。
+           *
+           * 查不到不影響路線 —— 路線才是這個工具的主體。
+           */
+          const [originWeather, destinationWeather] = await Promise.all([
+            getWeather(origin.lat, origin.lon).catch(() => null),
+            getWeather(destination.lat, destination.lon).catch(() => null),
+          ])
+
           return {
             from: describe(origin),
             to: describe(destination),
             data_source: 'tdx',
+            /* 目的地的天氣會被排成卡片；出發地的留給模型判斷「現在這邊在下雨」 */
+            weather: {
+              origin: originWeather && weatherPayload(originWeather, origin.label),
+              destination: destinationWeather && weatherPayload(destinationWeather, destination.label),
+            },
             /* 建議路線的門到門時間：走到起站 + 車程 + 出站走到目的地 */
             total_minutes: walk + routes.best.totalMinutes,
             /* 第一條是建議路線，其餘是使用者可以自己選的替代方案 */

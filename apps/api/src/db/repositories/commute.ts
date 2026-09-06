@@ -21,7 +21,7 @@ export type CommuteRoute = {
   line: string | null
   /*
    * TDX 的城市代碼（Taipei、Taichung…）。只有公車需要 ——
-   * 公車路線名要搭配城市才查得到，「307」在台北與台中是不同的線。
+   * 公車路線名要搭配城市才查得到，「307」在臺北與臺中是不同的線。
    */
   city: string | null
   /*

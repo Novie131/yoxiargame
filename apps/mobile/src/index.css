@@ -70,3 +70,34 @@ body {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/*
+ * 「思考中」的三顆點。
+ *
+ * 用 CSS animation 而不是 JS 計時器：等串流回來的這段時間元件一直掛著，
+ * 讓瀏覽器自己去動就好，不需要為了一個裝飾把 React 的 render 迴圈叫醒。
+ */
+@keyframes thinking-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.thinking-dot {
+  animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+
+/* 純裝飾，會暈的人關掉動態效果時就不要動 */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}

@@ -9,7 +9,7 @@ import { useLocationState, type UserLocation } from './location'
  * 流程是：瀏覽器定位 → 呼叫自家 /weather → 後端代打 Open-Meteo 與反向地理編碼。
  * 不直接從瀏覽器打第三方，CORS 與之後換資料來源都由後端吸收。
  *
- * 定位交給 lib/location（探索地圖也用同一份），被拒或逾時會退回台北市信義區，
+ * 定位交給 lib/location（探索地圖也用同一份），被拒或逾時會退回臺北市信義區，
  * 並標記 precise=false —— 畫面上要讓使用者知道那不是他真正的所在地。
  */
 

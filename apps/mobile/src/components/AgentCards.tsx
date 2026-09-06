@@ -269,7 +269,7 @@ function LocationRequest({
           onKeyDown={(e) => {
             if (e.key === 'Enter') void applyTypedPlace()
           }}
-          placeholder="信義區、板橋站、台北 101…"
+          placeholder="信義區、板橋站、臺北101…"
           aria-label="手動輸入目前位置"
           className="min-w-0 flex-1 rounded-lg bg-surface px-3 py-2 text-[14px] outline-none"
         />

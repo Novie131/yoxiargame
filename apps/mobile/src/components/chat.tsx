@@ -37,6 +37,27 @@ export function Avatar({
   )
 }
 
+/*
+ * 等回覆時的三顆點。
+ *
+ * 取代原本的「思考中...」：那三個字會跟串流回來的第一段文字打架 ——
+ * 字一出現它就消失，看起來像閃了一下。點點是純視覺的，換掉時不會有文字跳動。
+ */
+export function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-1 py-1.5" role="status" aria-label="思考中">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="thinking-dot block h-1.5 w-1.5 rounded-full bg-subtle"
+          /* 依序錯開，才是波浪而不是三顆一起跳 */
+          style={{ animationDelay: `${i * 0.16}s` }}
+        />
+      ))}
+    </span>
+  )
+}
+
 export function AssistantMessage({
   avatar = '🦎',
   time,

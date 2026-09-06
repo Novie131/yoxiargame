@@ -26,13 +26,13 @@ export type CityPreset = {
  * 目前先做三個城市當範例。座標取市中心（車站或市政府一帶），
  * zoom 11 大約是「看得到整個市區、也還讀得到主要道路與區名」的層級。
  *
- * 新北市的市域包住台北市、範圍又特別大，所以再拉遠一級；
+ * 新北市的市域包住臺北市、範圍又特別大，所以再拉遠一級；
  * 用板橋（市政府所在）當中心而不是幾何中心 —— 幾何中心會落在山區。
  */
 export const CITIES: CityPreset[] = [
-  { id: 'taipei', name: '台北', center: { lng: 121.5445, lat: 25.0553 }, zoom: 11 },
+  { id: 'taipei', name: '臺北', center: { lng: 121.5445, lat: 25.0553 }, zoom: 11 },
   { id: 'newtaipei', name: '新北', center: { lng: 121.4657, lat: 25.0121 }, zoom: 10.3 },
-  { id: 'taichung', name: '台中', center: { lng: 120.6736, lat: 24.1577 }, zoom: 11 },
+  { id: 'taichung', name: '臺中', center: { lng: 120.6736, lat: 24.1577 }, zoom: 11 },
 ]
 
 /*

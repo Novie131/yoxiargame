@@ -33,7 +33,7 @@ export function EstimateScreen() {
   const [selected, setSelected] = useState('sedan')
 
   /* 從探索頁導流過來時帶著任務名稱；沒有就用設計稿的示範地點 */
-  const destination = params.get('to')?.trim() || '台北松山機場'
+  const destination = params.get('to')?.trim() || '臺北松山機場'
 
   return (
     <div className="flex h-full flex-col">

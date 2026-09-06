@@ -84,7 +84,7 @@ export type WatchedRoute = {
  * 找出要盯這條路線的通勤設定。
  *
  * lineName 傳 null 代表這是沒有指定範圍的全網事件，所有已設定路線的人都受影響。
- * 時段判斷不在這裡做 —— 那需要台北時區的「現在」，放在 service 層比較好讀也好測。
+ * 時段判斷不在這裡做 —— 那需要臺北時區的「現在」，放在 service 層比較好讀也好測。
  */
 export async function findWatchedRoutes(
   client: PoolClient,

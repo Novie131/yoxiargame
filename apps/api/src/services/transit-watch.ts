@@ -28,7 +28,7 @@ import {
  * 那樣輪詢會直接命中使用者請求也在用的那份快取，實際額外呼叫接近零。
  */
 
-/* 台北時間。這是給台灣使用者用的服務，不跟著伺服器所在時區跑。 */
+/* 臺北時間。這是給台灣使用者用的服務，不跟著伺服器所在時區跑。 */
 const TIMEZONE = 'Asia/Taipei'
 
 /*
@@ -70,7 +70,7 @@ export type PollResult = {
 
 type Now = { day: string; time: string }
 
-/** 台北此刻的星期（mon…sun）與時間（HH:MM） */
+/** 臺北此刻的星期（mon…sun）與時間（HH:MM） */
 function taipeiNow(at: Date): Now {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: TIMEZONE,

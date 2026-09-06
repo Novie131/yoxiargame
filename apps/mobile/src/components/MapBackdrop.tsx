@@ -35,7 +35,7 @@ export function MapBackdrop({
         <Map
           center={{ lng: location.lon, lat: location.lat }}
           zoom={zoom}
-          /* 沒定位到就不畫藍點，只把視野放在預設位置（台北市信義區） */
+          /* 沒定位到就不畫藍點，只把視野放在預設位置（臺北市信義區） */
           userLocation={location.precise ? { lng: location.lon, lat: location.lat } : null}
           controls={false}
           className="h-full w-full"

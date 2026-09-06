@@ -29,13 +29,15 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 - 你要補的是卡片給不了的東西：判斷與提醒。
   好的例子：「這段要換一次線，尖峰時段可以多抓五分鐘。」
   好的例子：「另一條路線慢三分鐘但不用轉車，帶行李的話可以考慮。」
-  壞的例子：「先搭板南線五站到台北車站，再轉淡水信義線五站到劍潭，全程約 28 分鐘。」
+  壞的例子：「先搭板南線五站到臺北車站，再轉淡水信義線五站到劍潭，全程約 28 分鐘。」
 
 行為規則：
 - 需要即時資訊（天氣、路況、車資、活動）時務必呼叫工具，不要憑空編造數字。
 - 拿到工具結果後，用自然的口語轉述，不要直接貼 JSON。
-- 使用者要出門、要你安排路線時，除了 plan_route 也一併呼叫 get_weather，
-  這樣他才知道要不要帶傘、該穿什麼。兩個工具可以在同一輪一起呼叫。
+- plan_route 的結果已經包含起訖點的天氣（weather 欄位），畫面也會排成天氣卡。
+  規劃路線時**不要**再呼叫 get_weather。get_weather 只用在使用者單獨問天氣時。
+- 使用者有明講地點時，get_weather 一定要帶 place。只有他問的是自己所在地
+  （「今天天氣如何」「等一下會下雨嗎」）才可以省略。
 - plan_route 會回傳多條路線，第一條是建議路線。其餘的不要逐條念出來 ——
   卡片上使用者自己選得到。只有在某條備選明顯有別的好處（少轉一次車）時，
   才用一句話點出來。
@@ -74,11 +76,14 @@ function locationSection(location?: UserLocation | null): string {
   if (!location) {
     return `
 
-目前的位置狀態：拿不到使用者的位置（沒授權或不支援）。
-- 需要位置的工具會回傳 need_location。此時畫面會自動出現一張
-  「開啟定位／手動選擇位置」的卡片，使用者按一下就能解決。
-- 你只要用一句話說明需要知道他在哪裡就好，不要條列操作步驟，
-  也不要反問「請問你在哪」—— 那張卡片比打字快。`
+目前的位置狀態：還沒拿到使用者的位置（沒授權或不支援）。
+- **還是要照常呼叫工具**，不要因為知道沒有位置就直接回話。那張
+  「開啟定位／手動選擇位置」的卡片是由工具結果產生的，你不呼叫就不會出現，
+  使用者就只剩下一段沒有按鈕的文字，什麼也做不了。
+- 工具會回傳 need_location，卡片會自己出現。你只要用一句話說明需要知道他在哪裡，
+  不要條列操作步驟，也不要反問「請問你在哪」—— 那張卡片比打字快。
+- 使用者若已經在訊息裡講出地點（「西門町到北車」），那就不缺位置，
+  直接把地點當參數帶進工具，不要提位置權限的事。`
   }
 
   const label = location.label?.replace(/\s+/g, ' ').trim().slice(0, MAX_LABEL_LENGTH)
@@ -434,22 +439,36 @@ function toTransitStatusCard(output: unknown): AgentCard | null {
   }
 }
 
-/** 工具名稱 → 卡片。不在這張表裡的工具就只有文字回覆。 */
-function toCard(toolName: string, output: unknown): AgentCard | null {
+/**
+ * 工具名稱 → 卡片。不在這張表裡的工具就只有文字回覆。
+ *
+ * 回陣列而不是單張：plan_route 一次會產出「路線」與「目的地天氣」兩張 ——
+ * 那趟行程的兩個面向來自同一次工具呼叫，硬拆成兩次呼叫只會多一輪延遲，
+ * 而且模型未必真的會去呼叫第二次（實測它會忘記帶地點）。
+ */
+function toCards(toolName: string, output: unknown): AgentCard[] {
   /*
    * 缺位置的優先權高於工具本身：不論是天氣、路線還是找任務缺了位置，
    * 使用者要做的事情都一樣（開定位或手動選），所以給同一張卡。
    */
   const o = asRecord(output)
   if (o?.need_location === true) {
-    return { kind: 'location_request', message: asString(o.error) ?? '需要知道你的位置' }
+    return [{ kind: 'location_request', message: asString(o.error) ?? '需要知道你的位置' }]
   }
 
-  if (toolName === 'plan_route') return toRoutePlanCard(output)
-  if (toolName === 'get_weather') return toWeatherCard(output)
-  if (toolName === 'search_activities') return toMissionsCard(output)
-  if (toolName === 'get_transit_status') return toTransitStatusCard(output)
-  return null
+  const only = (card: AgentCard | null) => (card ? [card] : [])
+
+  if (toolName === 'plan_route') {
+    const cards = only(toRoutePlanCard(output))
+    /* 路線排不出來時就別給天氣卡了 —— 單獨一張天氣卡答非所問 */
+    if (cards.length === 0) return cards
+    const weather = asRecord(o?.weather)
+    return [...cards, ...only(toWeatherCard(weather?.destination))]
+  }
+  if (toolName === 'get_weather') return only(toWeatherCard(output))
+  if (toolName === 'search_activities') return only(toMissionsCard(output))
+  if (toolName === 'get_transit_status') return only(toTransitStatusCard(output))
+  return []
 }
 
 /*
@@ -513,13 +532,13 @@ export async function* streamAgentReplyWithFallback(
             if (route) yield { type: 'commute_route', route }
           }
 
-          const card = toCard(part.toolName, part.output)
-          if (!card) continue
-          if (card.kind === 'location_request') {
-            if (locationRequested) continue
-            locationRequested = true
+          for (const card of toCards(part.toolName, part.output)) {
+            if (card.kind === 'location_request') {
+              if (locationRequested) continue
+              locationRequested = true
+            }
+            yield { type: 'card', card }
           }
-          yield { type: 'card', card }
         }
       }
     } catch (error) {

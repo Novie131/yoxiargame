@@ -1,5 +1,5 @@
 /*
- * TDX 運輸資料流通服務（交通部）。目前只接台北捷運。
+ * TDX 運輸資料流通服務（交通部）。目前只接臺北捷運。
  *
  * 申請：tdx.transportdata.tw → 會員中心 → API 金鑰管理，
  * 取「API金鑰內容」的 Client Id / Client Secret（MQTT 那組用不到）。
@@ -25,7 +25,7 @@ const AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token'
 const API_BASE = 'https://tdx.transportdata.tw/api/basic'
 
-/* 台北捷運。之後要加高雄（KRTC）、桃園（TYMetro）時把它變成參數。 */
+/* 臺北捷運。之後要加高雄（KRTC）、桃園（TYMetro）時把它變成參數。 */
 const OPERATOR = 'TRTC'
 
 const TIMEOUT_MS = 8000
@@ -445,7 +445,7 @@ export function getS2STravelTime() {
 /*
  * 路線之間的轉乘。
  *
- * 這支很關鍵：台北捷運的同一個實體車站在不同路線上是**不同的 StationID**
+ * 這支很關鍵：臺北捷運的同一個實體車站在不同路線上是**不同的 StationID**
  * （西門在板南線是 BL11、在松山新店線是 G12），所以路網圖不能靠「站 id 相同」
  * 來連轉乘邊，一定要用這份對照表。
  *
@@ -573,13 +573,24 @@ export async function findNearestStation(
 export type MetroStation = {
   stationId: string
   name: string
-  /** 這一站經過的所有路線名。轉乘站會有多條，例如台北車站有淡水信義線與板南線。 */
+  /** 這一站經過的所有路線名。轉乘站會有多條，例如臺北車站有淡水信義線與板南線。 */
   lines: string[]
 }
 
-/* 「板橋」「板橋站」「 板橋 」要視為同一站 */
+/*
+ * 「板橋」「板橋站」「 板橋 」要視為同一站。
+ *
+ * 「臺」也要摺成「台」：TDX 的站表寫的是「台北車站」，但使用者與地理編碼
+ * 服務回的常常是「臺北車站」。不摺的話那些寫法一律查不到站，
+ * 要多繞一次地理編碼才找得回來（踩過）。
+ */
 function normalizeStationName(value: string): string {
-  return value.trim().replace(/\s+/g, '').replace(/站$/, '').toLowerCase()
+  return value
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/臺/g, '台')
+    .replace(/站$/, '')
+    .toLowerCase()
 }
 
 /* 依站名彙整的索引。同一站出現在多條路線時合併成一筆，lines 累積。 */

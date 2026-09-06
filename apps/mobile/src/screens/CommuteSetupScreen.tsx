@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 
 import { ChatComposer } from '@/components/ChatComposer'
 import { AgentCardView } from '@/components/AgentCards'
-import { AssistantMessage, UserMessage } from '@/components/chat'
+import { AssistantMessage, ThinkingDots, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
 import { TransitStatus } from '@/components/TransitStatus'
 import { TransportCard } from '@/components/TransportCard'
@@ -52,7 +52,7 @@ const conversation = createConversation(INTRO)
  *
  * 火車與高鐵是為了之後的跨縣市通勤預留的，先呈現按鈕、還不能選：
  * TDX 有台鐵（TRA）與高鐵（THSR）的資料，但這裡的路線推導、即時狀態、
- * 事件監看目前全都只認台北捷運，選了也不會有任何作用。
+ * 事件監看目前全都只認臺北捷運，選了也不會有任何作用。
  *
  * 刻意做成「看得到但按不下去」而不是直接能選 —— 讓使用者存下一條
  * 系統根本盯不住的路線，比先不給更糟：他會以為誤點時有人會通知他。
@@ -243,8 +243,8 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         </p>
 
         {/*
-          * 公車一定要有縣市才查得到路線 ——「307」在台北與台中是不同的兩條線。
-          * 捷運目前只接台北捷運，所以不用問。
+          * 公車一定要有縣市才查得到路線 ——「307」在臺北與臺中是不同的兩條線。
+          * 捷運目前只接臺北捷運，所以不用問。
           */}
         {mode !== 'metro' && (
           <div className="mt-3">
@@ -422,7 +422,7 @@ export function CommuteSetupScreen() {
             <UserMessage key={i}>{m.content}</UserMessage>
           ) : (
             <AssistantMessage key={i}>
-              {m.content || (m.cards?.length ? null : <span className="text-subtle">思考中...</span>)}
+              {m.content || (m.cards?.length ? null : <ThinkingDots />)}
               {/* 卡片跟文字是同一則回覆的兩個部分，所以放在同一個氣泡裡 */}
               {m.cards?.map((card, ci) => (
                 <AgentCardView key={ci} card={card} onRetry={conversation.retry} />

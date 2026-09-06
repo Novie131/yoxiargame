@@ -11,7 +11,7 @@ import { describePlace, geocodePlace } from './weather.ts'
  * 把「使用者講的地方」變成「可以拿去規劃的東西」。
  *
  * 存在的理由：使用者不會講捷運站名。他會說「幫我安排到北車」「我現在這裡」
- * 「台北 101」。路徑規劃只認得站名，天氣只認得座標，中間這一段轉換
+ * 「臺北 101」。路徑規劃只認得站名，天氣只認得座標，中間這一段轉換
  * 以前是缺的 —— 所以「當前位置」對 agent 一直是一個查不到的地名。
  *
  * 解析順序刻意是「先站名、再地標」：
@@ -31,7 +31,7 @@ export type ResolvedPlace = {
   label: string
   lat: number
   lon: number
-  /** 最近的捷運站。大台北以外、或站表拿不到時為 null。 */
+  /** 最近的捷運站。大臺北以外、或站表拿不到時為 null。 */
   station: ResolvedStation | null
   /*
    * 走得到捷運站。false 時捷運不是這一趟的合理選項，

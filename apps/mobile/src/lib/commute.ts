@@ -31,7 +31,7 @@ export type CommuteRoute = {
   line: string | null
   /*
    * TDX 城市代碼。只有公車需要 —— 公車路線名要搭配城市才查得到，
-   * 「307」在台北與台中是完全不同的兩條線。
+   * 「307」在臺北與臺中是完全不同的兩條線。
    */
   city: string | null
   /*
@@ -57,11 +57,11 @@ export type CommuteRoute = {
  * 打錯的話後端會回 400，不會默默查不到東西。
  */
 export const BUS_CITIES = [
-  { value: 'Taipei', label: '台北' },
+  { value: 'Taipei', label: '臺北' },
   { value: 'NewTaipei', label: '新北' },
   { value: 'Taoyuan', label: '桃園' },
-  { value: 'Taichung', label: '台中' },
-  { value: 'Tainan', label: '台南' },
+  { value: 'Taichung', label: '臺中' },
+  { value: 'Tainan', label: '臺南' },
   { value: 'Kaohsiung', label: '高雄' },
 ] as const
 
