@@ -424,7 +424,9 @@ export function CommuteSetupScreen() {
             <AssistantMessage key={i}>
               {m.content || (m.cards?.length ? null : <span className="text-subtle">思考中...</span>)}
               {/* 卡片跟文字是同一則回覆的兩個部分，所以放在同一個氣泡裡 */}
-              {m.cards?.map((card, ci) => <AgentCardView key={ci} card={card} />)}
+              {m.cards?.map((card, ci) => (
+                <AgentCardView key={ci} card={card} onRetry={conversation.retry} />
+              ))}
             </AssistantMessage>
           ),
         )}

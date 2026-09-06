@@ -10,7 +10,8 @@ import { getPreferences, savePreferences } from './db/repositories/preferences.t
 import { listNotifications, markRead } from './db/repositories/notifications.ts'
 import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
 import { clearRoute, readRoute, saveRoute, setNotifications } from './services/commute.ts'
-import { planMetroRoute } from './services/route-planner.ts'
+import { planMetroRoutes } from './services/route-planner.ts'
+import type { UserLocation } from './services/place.ts'
 import { compareTripOptions } from './services/trip-options.ts'
 import { pollTransit } from './services/transit-watch.ts'
 import {
@@ -20,7 +21,7 @@ import {
   isBusCity,
   searchMetroStations,
 } from './services/tdx.ts'
-import { getWeather } from './services/weather.ts'
+import { geocodePlace, getWeather } from './services/weather.ts'
 
 /*
  * Hono app 本體。Node（src/index.ts）與 Cloudflare Workers（src/worker.ts）
@@ -320,6 +321,31 @@ app.get('/trip/options', async (c) => {
 })
 
 /*
+ * 地名 → 座標。
+ *
+ * 給前端的「手動選擇位置」用：定位被拒絕時，使用者總得有辦法告訴我們他在哪。
+ * 由後端代打是因為 Nominatim 的使用條款要求可識別的 User-Agent 並限制頻率，
+ * 那兩件事在瀏覽器裡都做不到。
+ */
+app.get('/geocode', async (c) => {
+  const q = c.req.query('q')?.trim()
+  if (!q) return c.json({ error: '缺少 q 參數' }, 400)
+  /* 地名不會有這麼長，擋掉的是把這支端點當成任意轉發的用法 */
+  if (q.length > 60) return c.json({ error: 'q 太長' }, 400)
+
+  try {
+    const place = await geocodePlace(q)
+    if (!place) return c.json({ error: `查不到「${q}」這個地點` }, 404)
+
+    c.header('Cache-Control', 'public, max-age=86400')
+    return c.json({ lat: place.lat, lon: place.lon, name: place.shortName })
+  } catch (error) {
+    console.error('[geocode]', error)
+    return c.json({ error: '地點查詢暫時無法使用' }, 502)
+  }
+})
+
+/*
  * 捷運路徑規劃。
  *
  * 路網是靜態資料，服務端建一次圖快取一天，之後每次查詢都是本地計算 ——
@@ -333,11 +359,16 @@ app.get('/transit/plan', async (c) => {
   if (!hasTdxCredentials()) return c.json({ error: 'TDX 金鑰未設定' }, 503)
 
   try {
-    const plan = await planMetroRoute(from, to)
-    if (!plan) return c.json({ error: `查不到「${from}」到「${to}」的捷運路線` }, 404)
+    const routes = await planMetroRoutes(from, to)
+    if (!routes) return c.json({ error: `查不到「${from}」到「${to}」的捷運路線` }, 404)
 
     c.header('Cache-Control', 'public, max-age=3600')
-    return c.json(plan)
+    /*
+     * 最佳路線的欄位攤平在最外層，備選另外放一個陣列。
+     * 這樣既有的呼叫端（設定畫面的「約 N 分鐘」）不用改就能繼續用，
+     * 要顯示備選的畫面再多讀一個欄位。
+     */
+    return c.json({ ...routes.best, alternatives: routes.alternatives })
   } catch (error) {
     console.error('[transit/plan]', error)
     return c.json({ error: '路線規劃暫時無法使用' }, 502)
@@ -597,10 +628,38 @@ app.post('/internal/poll', async (c) => {
   return c.json(result)
 })
 
+/*
+ * 前端帶進來的定位。
+ *
+ * 座標不合法就當作沒有位置 —— 寧可讓畫面跳出「開啟定位」的卡片，
+ * 也不要拿一個錯的座標去規劃，那會回一條看起來很正常但完全錯誤的路線。
+ *
+ * label 是前端已經知道的地名，純粹省一次反向地理編碼。它會進到系統提示裡，
+ * 所以長度要有上限（agent/index.ts 還會再清一次換行）。
+ */
+const MAX_LOCATION_LABEL = 80
+
+function parseLocation(value: unknown): UserLocation | null {
+  if (typeof value !== 'object' || value === null) return null
+  const o = value as Record<string, unknown>
+
+  const lat = Number(o.lat)
+  const lon = Number(o.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
+
+  const label =
+    typeof o.label === 'string' && o.label.trim()
+      ? o.label.trim().slice(0, MAX_LOCATION_LABEL)
+      : null
+
+  return { lat, lon, precise: o.precise === true, label }
+}
+
 app.post('/agent/chat', async (c) => {
   const userRef = readUserRef(c.req.header('X-User-Ref'))
 
-  let body: { messages?: unknown }
+  let body: { messages?: unknown; location?: unknown }
   try {
     body = await c.req.json()
   } catch {
@@ -611,6 +670,7 @@ app.post('/agent/chat', async (c) => {
   if (!result.ok) return c.json({ error: result.error }, 400)
 
   const messages: ChatMessage[] = result.messages
+  const location = parseLocation(body.location)
 
   /*
    * NDJSON：一行一個 JSON 事件。
@@ -626,7 +686,7 @@ app.post('/agent/chat', async (c) => {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const event of streamAgentReplyWithFallback(messages, userRef)) {
+        for await (const event of streamAgentReplyWithFallback(messages, userRef, location)) {
           controller.enqueue(line(event))
         }
       } catch (error) {

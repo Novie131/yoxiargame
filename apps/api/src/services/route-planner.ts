@@ -24,6 +24,21 @@ import {
  */
 
 /*
+ * 演算法選擇：Yen's K-Shortest Loopless Paths（外層）+ Dijkstra（核心）。
+ *
+ * 為什麼不是 A*：A* 是**單一**最短路徑演算法（帶啟發式的 Dijkstra），跑完
+ * 只回一條，給不了「除了最佳路線還有哪些選擇」。多路徑的標準解就是 Yen，
+ * 而 Yen 的內層本來就是反覆呼叫一個最短路徑核心。
+ *
+ * 核心用 Dijkstra 而不是 A*，是因為這張圖只有約三百個節點（站 × 線）——
+ * A* 的剪枝在這個規模省不到可以測量的時間，卻要多維護一份站座標與
+ * 「直線距離 ÷ 最高車速」的啟發式，還得證明它 admissible 才不會算錯。
+ *
+ * 之後若把公車路網併進來（節點數上萬），只要把 dijkstra() 換成 A*，
+ * Yen 的部分一行都不用動 —— 這是刻意留的接縫。
+ */
+
+/*
  * 轉乘後等下一班車的秒數。
  *
  * TDX 的 TransferTime 只含站內步行，不含等車。台北捷運尖峰班距約 2-4 分鐘，
@@ -51,6 +66,21 @@ export type RoutePlan = {
   totalMinutes: number
   transfers: number
   legs: RouteLeg[]
+}
+
+/**
+ * 一組起訖的規劃結果：最佳路線，加上值得讓使用者自己選的備選。
+ *
+ * 備選存在的理由不是「湊數字」，是**最快不一定最好**：少轉一次車、
+ * 不用在台北車站走那條長廊，很多人願意為此多花五分鐘。所以備選一律
+ * 附上轉乘次數，由使用者自己判斷，我們不替他決定。
+ */
+export type RouteAlternatives = {
+  from: string
+  to: string
+  best: RoutePlan
+  /** 已去重、已濾掉繞遠路的；可能是空陣列（真的只有一條合理路線） */
+  alternatives: RoutePlan[]
 }
 
 /* 節點 = 「某一條線上的某一站」。把轉乘顯性化成一條有成本的邊。 */
@@ -164,19 +194,69 @@ async function graph(): Promise<Graph> {
   if (graphCache && Date.now() - graphCache.at < GRAPH_TTL_MS) return graphCache.graph
   const built = await buildGraph()
   graphCache = { at: Date.now(), graph: built }
+  /* 圖換了，之前算出來的路線就不算數了 */
+  planCache.clear()
   return built
 }
 
+/* ── 最短路徑核心 ───────────────────────────────────────────── */
+
+const VIRTUAL_SOURCE: NodeId = '__src'
+const VIRTUAL_SINK: NodeId = '__dst'
+
+const edgeKey = (from: NodeId, to: NodeId) => `${from}>${to}`
+
+type Path = { nodes: NodeId[]; seconds: number }
+
+/** 查某個節點出去的邊。虛擬起訖點的邊疊在真實圖上，不去動快取的圖。 */
+type EdgeLookup = (node: NodeId) => Edge[]
+
 /*
- * Dijkstra。節點只有一百多個，用線性搜尋找最小值就夠了 ——
- * 為了這個規模導入一個二元堆積不划算。
+ * 虛擬起訖點。
+ *
+ * 「台北車站」在圖上是兩個節點（BL12 與 R10），兩個都該當成可能的出發月台。
+ * 多起點的 Dijkstra 很好寫，但 **Yen 需要路徑的第一個節點是固定的** ——
+ * 否則從第 0 個節點分岔時，永遠探索不到「從另一個月台出發」的那些路線，
+ * 而那常常正是最有價值的備選（少轉一次車的那條）。
+ *
+ * 加一個 0 成本的虛擬起點與終點，就把多起訖變回單起訖問題，
+ * 演算法本身不用為此開任何特例。
  */
-function shortestPath(g: Graph, starts: NodeId[], goals: Set<NodeId>): NodeId[] | null {
-  const dist = new Map<NodeId, number>()
+function withVirtualEnds(g: Graph, starts: NodeId[], goals: NodeId[]): EdgeLookup {
+  const extra = new Map<NodeId, Edge[]>()
+  extra.set(
+    VIRTUAL_SOURCE,
+    starts.map((to) => ({ to, seconds: 0, transfer: false })),
+  )
+  for (const goal of goals) {
+    extra.set(goal, [{ to: VIRTUAL_SINK, seconds: 0, transfer: false }])
+  }
+
+  return (node) => {
+    const real = g.edges.get(node) ?? []
+    const virtual = extra.get(node)
+    return virtual ? [...real, ...virtual] : real
+  }
+}
+
+/*
+ * Dijkstra。節點只有幾百個，用線性搜尋找最小值就夠了 ——
+ * 為了這個規模導入一個二元堆積不划算，即使 Yen 會反覆呼叫它幾十次
+ * （實測整趟規劃在個位數毫秒）。
+ *
+ * bannedNodes / bannedEdges 是 Yen 用的：把已經走過的分支封起來，
+ * 逼演算法找出「不一樣的」下一條路。
+ */
+function dijkstra(
+  edgesOf: EdgeLookup,
+  source: NodeId,
+  sink: NodeId,
+  bannedNodes: Set<NodeId>,
+  bannedEdges: Set<string>,
+): Path | null {
+  const dist = new Map<NodeId, number>([[source, 0]])
   const prev = new Map<NodeId, NodeId>()
   const visited = new Set<NodeId>()
-
-  for (const s of starts) dist.set(s, 0)
 
   for (;;) {
     let current: NodeId | null = null
@@ -188,19 +268,21 @@ function shortestPath(g: Graph, starts: NodeId[], goals: Set<NodeId>): NodeId[] 
       }
     }
     if (current === null) return null
-    if (goals.has(current)) {
-      const path = [current]
+
+    if (current === sink) {
+      const nodes = [current]
       let node = current
       while (prev.has(node)) {
         node = prev.get(node)!
-        path.unshift(node)
+        nodes.unshift(node)
       }
-      return path
+      return { nodes, seconds: best }
     }
 
     visited.add(current)
-    for (const edge of g.edges.get(current) ?? []) {
-      if (visited.has(edge.to)) continue
+    for (const edge of edgesOf(current)) {
+      if (visited.has(edge.to) || bannedNodes.has(edge.to)) continue
+      if (bannedEdges.has(edgeKey(current, edge.to))) continue
       const next = best + edge.seconds
       if (next < (dist.get(edge.to) ?? Infinity)) {
         dist.set(edge.to, next)
@@ -208,6 +290,85 @@ function shortestPath(g: Graph, starts: NodeId[], goals: Set<NodeId>): NodeId[] 
       }
     }
   }
+}
+
+function pathSeconds(edgesOf: EdgeLookup, nodes: NodeId[]): number {
+  let total = 0
+  for (let i = 1; i < nodes.length; i++) {
+    const edge = edgesOf(nodes[i - 1]).find((e) => e.to === nodes[i])
+    /* 邊被封掉或圖不一致時走不到這裡，但真的發生就當這條路不可用 */
+    if (!edge) return Infinity
+    total += edge.seconds
+  }
+  return total
+}
+
+const samePrefix = (path: NodeId[], prefix: NodeId[]) =>
+  path.length >= prefix.length && prefix.every((n, i) => path[i] === n)
+
+/*
+ * Yen's K-Shortest Loopless Paths。
+ *
+ * 作法：拿上一條已接受的路線，逐一把它的每個節點當「分岔點」，
+ * 封掉「會走出同一條路」的那條邊，再從分岔點重算到終點。
+ * 所有候選裡最短的那條就是下一條最佳路線，重複 K 次。
+ *
+ * 封鎖根路徑上的節點是為了避免繞出帶環的路徑（loopless 的來源）。
+ */
+function yenKShortest(g: Graph, starts: NodeId[], goals: NodeId[], k: number): Path[] {
+  const edgesOf = withVirtualEnds(g, starts, goals)
+
+  const first = dijkstra(edgesOf, VIRTUAL_SOURCE, VIRTUAL_SINK, new Set(), new Set())
+  if (!first) return []
+
+  const accepted: Path[] = [first]
+  /* Yen 的候選集 B。數量是個位數，用陣列 + 每輪線性取最小就夠。 */
+  const candidates: Path[] = []
+  const seen = new Set<string>([first.nodes.join('>')])
+
+  while (accepted.length < k) {
+    const previous = accepted[accepted.length - 1]
+
+    /* 最後一個節點是虛擬終點，從它分岔沒有意義 */
+    for (let i = 0; i < previous.nodes.length - 1; i++) {
+      const spur = previous.nodes[i]
+      const root = previous.nodes.slice(0, i + 1)
+
+      /* 已接受的路線裡，凡是共用這段開頭的，都把它的下一步封起來 */
+      const bannedEdges = new Set<string>()
+      for (const p of accepted) {
+        if (p.nodes.length > i + 1 && samePrefix(p.nodes, root)) {
+          bannedEdges.add(edgeKey(p.nodes[i], p.nodes[i + 1]))
+        }
+      }
+
+      /* 根路徑上的節點（分岔點自己除外）不能再踩，否則會繞回去成環 */
+      const bannedNodes = new Set(root.slice(0, -1))
+
+      const spurPath = dijkstra(edgesOf, spur, VIRTUAL_SINK, bannedNodes, bannedEdges)
+      if (!spurPath) continue
+
+      const nodes = [...root.slice(0, -1), ...spurPath.nodes]
+      const signature = nodes.join('>')
+      if (seen.has(signature)) continue
+
+      const rootSeconds = pathSeconds(edgesOf, root)
+      if (!Number.isFinite(rootSeconds)) continue
+
+      seen.add(signature)
+      candidates.push({ nodes, seconds: rootSeconds + spurPath.seconds })
+    }
+
+    if (candidates.length === 0) break
+
+    let bestIndex = 0
+    for (let i = 1; i < candidates.length; i++) {
+      if (candidates[i].seconds < candidates[bestIndex].seconds) bestIndex = i
+    }
+    accepted.push(candidates.splice(bestIndex, 1)[0])
+  }
+
+  return accepted
 }
 
 /** 把節點路徑收合成「搭幾段車」，轉乘邊就是段落的分界 */
@@ -263,14 +424,50 @@ function toLegs(g: Graph, path: NodeId[]): { legs: RouteLeg[]; totalSeconds: num
   return { legs, totalSeconds }
 }
 
+/* ── 對外 API ──────────────────────────────────────────────── */
+
+/*
+ * 原始搜尋條數。要比最後想留的多，因為換月台造成的「同一條路線」
+ * 會在去重時被丟掉 —— 只搜 3 條的話很可能去重完只剩 1 條。
+ */
+const RAW_PATH_SEARCH = 8
+
+/** 最後最多回幾條備選（不含最佳路線） */
+const MAX_ALTERNATIVES = 2
+
+/*
+ * 備選可以慢多少才還算是「另一個選擇」。
+ *
+ * 兩個上限取比較嚴的那個：短程用比例（10 分鐘的路，14 分鐘還能接受），
+ * 長程用絕對值（40 分鐘的路，慢 12 分鐘就是繞遠路，不是選擇）。
+ * 沒有這道關卡的話，Yen 會很開心地回一條多繞三站的路線，
+ * 而使用者要多讀一整張卡片才能忽略它。
+ */
+const ALTERNATIVE_SLOWER_RATIO = 1.4
+const ALTERNATIVE_SLOWER_MINUTES = 12
+
+/*
+ * 規劃結果快取。
+ *
+ * 圖已經快取了，但 Yen 是每次查詢都要重跑的。通勤路線會被反覆查同一組
+ * 起訖（首頁、行程頁、通知輪詢各一次），存起來就都省掉了。
+ * 圖重建時整個清掉，見 graph()。
+ */
+const planCache = new Map<string, RouteAlternatives | null>()
+const PLAN_CACHE_MAX = 500
+
+/** 同樣的搭法就算是同一條路線 —— 換月台不算不同路線 */
+const legSignature = (legs: RouteLeg[]) =>
+  legs.map((l) => `${l.lineId}:${l.from}>${l.to}`).join('|')
+
 /**
- * 規劃兩站之間的捷運路線。
+ * 規劃兩站之間的捷運路線，回傳最佳路線與備選。
  * 查不到任何一站、或兩站之間不連通時回 null —— 呼叫端要照實說查不到，不要編。
  */
-export async function planMetroRoute(
+export async function planMetroRoutes(
   origin: string,
   destination: string,
-): Promise<RoutePlan | null> {
+): Promise<RouteAlternatives | null> {
   if (!hasTdxCredentials()) return null
 
   const [from, to] = await Promise.all([
@@ -280,23 +477,100 @@ export async function planMetroRoute(
   if (!from || !to) return null
   if (from.name === to.name) return null
 
+  const cacheKey = `${from.name}→${to.name}`
+  const hit = planCache.get(cacheKey)
+  if (hit !== undefined) return hit
+
   const g = await graph()
   /* 用站名而不是站 id：轉乘站在不同線上是不同的 id，兩邊都要算成候選月台 */
   const starts = g.nodesByName.get(from.name)
   const goals = g.nodesByName.get(to.name)
   if (!starts?.length || !goals?.length) return null
 
-  const path = shortestPath(g, starts, new Set(goals))
-  if (!path) return null
+  const paths = yenKShortest(g, starts, goals, RAW_PATH_SEARCH)
 
-  const { legs, totalSeconds } = toLegs(g, path)
-  if (legs.length === 0) return null
+  const plans: RoutePlan[] = []
+  const signatures = new Set<string>()
 
-  return {
-    from: from.name,
-    to: to.name,
-    totalMinutes: Math.round(totalSeconds / 60),
-    transfers: legs.length - 1,
-    legs,
+  for (const path of paths) {
+    /* 頭尾是虛擬節點，收合成段落之前要先拿掉 */
+    const real = path.nodes.slice(1, -1)
+    if (real.length < 2) continue
+
+    const { legs, totalSeconds } = toLegs(g, real)
+    if (legs.length === 0) continue
+
+    const signature = legSignature(legs)
+    if (signatures.has(signature)) continue
+    signatures.add(signature)
+
+    plans.push({
+      from: from.name,
+      to: to.name,
+      totalMinutes: Math.round(totalSeconds / 60),
+      transfers: legs.length - 1,
+      legs,
+    })
   }
+
+  if (plans.length === 0) {
+    remember(cacheKey, null)
+    return null
+  }
+
+  const [best, ...rest] = plans
+  const limit = Math.min(
+    best.totalMinutes * ALTERNATIVE_SLOWER_RATIO,
+    best.totalMinutes + ALTERNATIVE_SLOWER_MINUTES,
+  )
+
+  /*
+   * 挑出真的值得讓使用者選的備選。
+   *
+   * Yen 回的路徑是照時間排的，所以每一條備選都比前面的慢。既然慢了，
+   * 它至少要在**別的地方**比較好，否則就是一條又慢又要多換一次車的路 ——
+   * 那不是選擇，是雜訊（實測「淡水→象山」的第二、三條就是這樣：
+   * 比直達慢 8 分鐘，還要多轉兩次）。
+   *
+   * 判準是 Pareto 支配：轉乘次數不能比已經列出的任何一條還多。
+   * 允許持平是刻意的 —— 轉乘次數一樣但走不同線（「西門→大安」可以走
+   * 松山新店線也可以走板南線）是真的有人會想選的，尤其某條線出事的時候。
+   */
+  const alternatives: RoutePlan[] = []
+  let fewestTransfers = best.transfers
+
+  for (const plan of rest) {
+    if (alternatives.length >= MAX_ALTERNATIVES) break
+    if (plan.totalMinutes > limit) continue
+    if (plan.transfers > fewestTransfers) continue
+    alternatives.push(plan)
+    fewestTransfers = Math.min(fewestTransfers, plan.transfers)
+  }
+
+  const result: RouteAlternatives = {
+    from: best.from,
+    to: best.to,
+    best,
+    alternatives,
+  }
+
+  remember(cacheKey, result)
+  return result
+}
+
+function remember(key: string, value: RouteAlternatives | null) {
+  /* 滿了就整個清掉。做 LRU 要多一份順序表，為了幾百筆不值得。 */
+  if (planCache.size >= PLAN_CACHE_MAX) planCache.clear()
+  planCache.set(key, value)
+}
+
+/**
+ * 只要最佳路線。給不需要備選的呼叫端（通勤路線推導、行程選項比較）用。
+ */
+export async function planMetroRoute(
+  origin: string,
+  destination: string,
+): Promise<RoutePlan | null> {
+  const result = await planMetroRoutes(origin, destination)
+  return result?.best ?? null
 }

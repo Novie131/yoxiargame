@@ -1,4 +1,4 @@
-import { planMetroRoute, type RoutePlan } from './route-planner.ts'
+import { planMetroRoutes, type RoutePlan } from './route-planner.ts'
 import { findNearestStation, hasTdxCredentials, haversineMeters } from './tdx.ts'
 
 /*
@@ -46,7 +46,15 @@ const WALKABLE_METERS = 2_000
  * 願意為了搭捷運走多遠去車站。超過就代表捷運不是這一趟的合理選項 ——
  * 為了搭三站捷運先走二十分鐘沒有意義。
  */
-const MAX_WALK_TO_STATION_METERS = 1_200
+export const MAX_WALK_TO_STATION_METERS = 1_200
+
+/**
+ * 直線距離 → 估計步行分鐘數。
+ * 對外開放是因為 agent 的路線規劃也要用同一套估法 ——
+ * 兩邊各估各的，同一段路會在對話與面板上出現兩個不同的數字。
+ */
+export const estimateWalkMinutes = (straightMeters: number) =>
+  Math.max(1, Math.round((straightMeters * DETOUR_FACTOR) / WALK_METERS_PER_MINUTE))
 
 export type WalkOption = {
   mode: 'walk'
@@ -61,6 +69,11 @@ export type MetroOption = {
   fromStation: { name: string; walkMinutes: number }
   toStation: { name: string; walkMinutes: number }
   plan: RoutePlan
+  /*
+   * 同一組起訖站的其他搭法（少轉一次、走不同線）。
+   * 可能是空陣列 —— 直達的短程通常就真的只有一種合理走法。
+   */
+  alternatives: RoutePlan[]
 }
 
 export type RideOption = {
@@ -82,9 +95,6 @@ export type TripOptions = {
   options: TripOption[]
 }
 
-const walkMinutes = (straightMeters: number) =>
-  Math.max(1, Math.round((straightMeters * DETOUR_FACTOR) / WALK_METERS_PER_MINUTE))
-
 /* 這個距離內就當作「到了」，不用再給交通建議 */
 const ARRIVED_METERS = 150
 
@@ -103,7 +113,7 @@ export async function compareTripOptions(
   const options: TripOption[] = []
 
   if (distanceMeters <= WALKABLE_METERS) {
-    options.push({ mode: 'walk', minutes: walkMinutes(distanceMeters), distanceMeters })
+    options.push({ mode: 'walk', minutes: estimateWalkMinutes(distanceMeters), distanceMeters })
   }
 
   /* 捷運：兩端都要有走得到的車站，而且不能是同一站（同站代表捷運幫不上忙） */
@@ -121,16 +131,17 @@ export async function compareTripOptions(
         from.distanceMeters <= MAX_WALK_TO_STATION_METERS &&
         to.distanceMeters <= MAX_WALK_TO_STATION_METERS
       ) {
-        const plan = await planMetroRoute(from.name, to.name)
-        if (plan) {
-          const fromWalk = walkMinutes(from.distanceMeters)
-          const toWalk = walkMinutes(to.distanceMeters)
+        const routes = await planMetroRoutes(from.name, to.name)
+        if (routes) {
+          const fromWalk = estimateWalkMinutes(from.distanceMeters)
+          const toWalk = estimateWalkMinutes(to.distanceMeters)
           options.push({
             mode: 'metro',
-            totalMinutes: fromWalk + plan.totalMinutes + toWalk,
+            totalMinutes: fromWalk + routes.best.totalMinutes + toWalk,
             fromStation: { name: from.name, walkMinutes: fromWalk },
             toStation: { name: to.name, walkMinutes: toWalk },
-            plan,
+            plan: routes.best,
+            alternatives: routes.alternatives,
           })
         }
       }

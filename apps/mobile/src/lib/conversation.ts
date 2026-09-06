@@ -58,10 +58,13 @@ export function createConversation(intro?: string) {
     }
   }
 
-  async function send(text: string) {
-    if (state.busy) return
-
-    const next: UiMessage[] = [...state.messages, { role: 'user', content: text }]
+  /*
+   * 送出一批訊息並串流回覆。
+   *
+   * send 與 retry 共用這裡：兩者的差別只在「要送出去的訊息是哪一批」，
+   * 串流、卡片累積、錯誤處理完全一樣。
+   */
+  async function run(next: UiMessage[]) {
     patch({ messages: [...next, { role: 'assistant', content: '' }], busy: true, error: null })
 
     try {
@@ -97,9 +100,33 @@ export function createConversation(intro?: string) {
     }
   }
 
+  async function send(text: string) {
+    if (state.busy) return
+    await run([...state.messages, { role: 'user', content: text }])
+  }
+
+  /*
+   * 用同一句話再問一次。
+   *
+   * 給「缺位置」那張卡片用：使用者按下開啟定位或選好地點之後，
+   * 該做的事情跟他剛剛講的那句話一模一樣，不該要他再打一次字。
+   *
+   * 作法是把最後一則使用者訊息之後的東西全部丟掉再重跑 —— 直接呼叫 send
+   * 會在畫面上留下兩顆一樣的使用者氣泡。
+   */
+  async function retry() {
+    if (state.busy) return
+
+    const fromEnd = [...state.messages].reverse().findIndex((m) => m.role === 'user')
+    if (fromEnd < 0) return
+
+    await run(state.messages.slice(0, state.messages.length - fromEnd))
+  }
+
   return {
     use: () => useSyncExternalStore(subscribe, () => state),
     send,
+    retry,
     reset: () => patch({ messages: initial, busy: false, error: null }),
   }
 }
@@ -109,4 +136,5 @@ const home = createConversation()
 
 export const useConversation = home.use
 export const sendMessage = home.send
+export const retryConversation = home.retry
 export const resetConversation = home.reset

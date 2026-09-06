@@ -1,5 +1,6 @@
 import { CloudIcon, MoonIcon, RainIcon, SunIcon } from './icons'
 import { greeting as greetingFor } from '@/lib/datetime'
+import { requestLocation, useLocationState } from '@/lib/location'
 import { useMember } from '@/lib/member'
 import { useWeather, type Weather } from '@/lib/weather'
 
@@ -28,6 +29,7 @@ export function HomeHeader({
 }) {
   const { displayName } = useMember()
   const weather = useWeather()
+  const { status } = useLocationState()
 
   const heading = greeting ?? `${greetingFor()}，${displayName}`
 
@@ -56,10 +58,23 @@ export function HomeHeader({
                 {weather.weather.condition !== '—' && ` ${weather.weather.condition}`}
               </span>
               <WeatherIcon weather={weather.weather} />
-              {/* 定位被拒時給的是台北市中心，要講清楚，不要讓人以為是他所在地 */}
-              {!weather.precise && (
-                <span className="shrink-0 whitespace-nowrap text-subtle">（未定位）</span>
-              )}
+              {/*
+                * 定位被拒時給的是台北市中心，要講清楚，不要讓人以為是他所在地。
+                * 而且要**可以按** —— 只寫「（未定位）」等於告訴使用者有問題卻不給出路，
+                * 他得自己想到去系統設定裡翻。按一下就重新要一次權限。
+                */}
+              {!weather.precise &&
+                (status === 'manual' ? (
+                  <span className="shrink-0 whitespace-nowrap text-subtle">（手動指定）</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void requestLocation()}
+                    className="shrink-0 whitespace-nowrap text-subtle underline underline-offset-2"
+                  >
+                    （未定位，開啟）
+                  </button>
+                ))}
             </>
           ) : weather.status === 'loading' ? (
             <span className="text-subtle">取得目前天氣…</span>

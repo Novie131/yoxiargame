@@ -62,13 +62,33 @@ Capacitor 8 使用 Swift Package Manager，不需要 CocoaPods。
 
 ## 目前狀態
 
-設計稿 11 個畫面已實作完成，資料全為假資料。
-詳細進度與待辦見 `Document/README.md`。
+設計稿 11 個畫面已實作完成。天氣、捷運路徑規劃、捷運與公車即時狀態已接真實來源；
+叫車估價（`estimate_ride`）仍是假資料。詳細進度與待辦見 `Document/README.md`。
 
-未完成：設定頁與會員頁（設計稿未提供）、真實地圖圖磚、中央氣象署串接。
+未完成：設定頁與會員頁（設計稿未提供）、真實地圖圖磚、中央氣象署串接、
+yoxi 叫車估價 API。
+
+### 位置與路徑規劃
+
+對話助理知道使用者在哪裡：前端每次發話都把定位帶進 `/agent/chat` 的 `location`
+欄位，所以「幫我安排當前位置到北車」直接規劃，不用反問。拿不到定位時工具會回
+`need_location`，串流會送一張卡片讓使用者當場開啟定位或手動輸入地點
+（走 `/geocode`），設定完自動用同一句話重問一次。
+
+退路座標（信義區）**不會**被當成使用者位置送給後端 —— 那會讓人在台中卻拿到
+從市政府站出發的路線。
+
+路徑規劃用 **Yen's K-Shortest Loopless Paths + Dijkstra**，回傳建議路線與備選。
+備選會濾掉「又慢又要多轉一次」的路（Pareto 支配），所以常常是空的，那是正確的。
+不用 A\* 的理由寫在 `services/route-planner.ts` 的檔頭。
+
+天氣除了現況，另外抓 8 小時逐時預報，導出帶傘（降雨機率 ≥ 30%）與依**體感溫度**
+分級的穿著建議。首頁小卡刻意只顯示「有事才提醒」的那幾則，穿著建議不算事件。
 
 捷運與公車即時狀態已接上 TDX（需在 `.env` 填 `TDX_CLIENT_ID` / `TDX_CLIENT_SECRET`），
 端點為 `/transit/metro?line=` 與 `/transit/bus?route=&city=&stop=`。
+`/transit/plan?from=&to=` 回傳最佳路線（欄位攤平在最外層）加上 `alternatives`；
+路網圖快取一天，這支不吃 TDX 額度。`/geocode?q=` 是地名轉座標。
 
 TDX 實測額度是**每分鐘 5 次**，不是文件寫的每秒 50 次，所以
 `services/tdx.ts` 的快取、併發合流與配額守門都不能拿掉。

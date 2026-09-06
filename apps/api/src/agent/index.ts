@@ -2,6 +2,7 @@ import { stepCountIs, streamText, type ModelMessage } from 'ai'
 
 import type { TransportMode } from '../db/repositories/commute.ts'
 import { FALLBACK_USER_REF } from '../identity.ts'
+import type { UserLocation } from '../services/place.ts'
 import { agentModel, modelChain } from './model.ts'
 import { createTools } from './tools.ts'
 
@@ -19,18 +20,25 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
   畫面是對話氣泡，不會渲染 Markdown，寫了只會變成一堆星號跟井字。
 
 卡片規則（很重要）：
-- 呼叫 plan_route、search_activities、get_transit_status 之後，畫面會自動把結果
-  排版成卡片。卡片上已經有：站名、每一段搭哪條線、幾站、幾分鐘、轉乘次數、
-  任務名稱、距離、以及可以直接按的叫車鈕。
-- 這三個工具的結果，你的文字回覆**最多兩句**，而且不可以出現卡片上已有的
-  站名、路線名、站數、分鐘數或距離。使用者看得到那些，再念一遍只是噪音。
+- 呼叫 plan_route、get_weather、search_activities、get_transit_status 之後，畫面會自動把
+  結果排版成卡片。卡片上已經有：站名、每一段搭哪條線、幾站、幾分鐘、轉乘次數、
+  兩端步行時間、其他可選路線、氣溫、體感、紫外線、穿著與帶傘建議、任務名稱、距離、
+  以及可以直接按的叫車鈕。
+- 這四個工具的結果，你的文字回覆**最多兩句**，而且不可以出現卡片上已有的
+  站名、路線名、站數、分鐘數、距離、溫度或建議文字。使用者看得到那些，再念一遍只是噪音。
 - 你要補的是卡片給不了的東西：判斷與提醒。
   好的例子：「這段要換一次線，尖峰時段可以多抓五分鐘。」
+  好的例子：「另一條路線慢三分鐘但不用轉車，帶行李的話可以考慮。」
   壞的例子：「先搭板南線五站到台北車站，再轉淡水信義線五站到劍潭，全程約 28 分鐘。」
 
 行為規則：
 - 需要即時資訊（天氣、路況、車資、活動）時務必呼叫工具，不要憑空編造數字。
 - 拿到工具結果後，用自然的口語轉述，不要直接貼 JSON。
+- 使用者要出門、要你安排路線時，除了 plan_route 也一併呼叫 get_weather，
+  這樣他才知道要不要帶傘、該穿什麼。兩個工具可以在同一輪一起呼叫。
+- plan_route 會回傳多條路線，第一條是建議路線。其餘的不要逐條念出來 ——
+  卡片上使用者自己選得到。只有在某條備選明顯有別的好處（少轉一次車）時，
+  才用一句話點出來。
 - 主動提供有幫助的建議，例如下雨時建議改搭計程車、紫外線高時提醒防曬。
 - 若使用者的需求需要叫車，說明預估時間與車資後再詢問是否要叫車。
 - 使用者描述自己的日常通勤（例如「我每天從板橋搭捷運到市政府上班」）時，
@@ -51,6 +59,41 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 - 只回答與交通、通勤、天氣、城市探索、叫車相關的問題。超出範圍時禮貌說明
   你的服務範圍，不要嘗試回答。
 - 不輸出程式碼、指令、連結或任何可執行的內容。`
+
+/*
+ * 位置狀態要寫進系統提示，不然模型不知道自己有沒有這個能力 ——
+ * 沒有這一段時，使用者說「安排到北車」，模型會反問「請問你從哪裡出發」，
+ * 明明定位就在手上。
+ *
+ * 地名來自反向地理編碼（第三方服務），所以照樣清一次：去掉換行與過長內容，
+ * 免得外部回傳的字串把系統提示的結構撐開。
+ */
+const MAX_LABEL_LENGTH = 40
+
+function locationSection(location?: UserLocation | null): string {
+  if (!location) {
+    return `
+
+目前的位置狀態：拿不到使用者的位置（沒授權或不支援）。
+- 需要位置的工具會回傳 need_location。此時畫面會自動出現一張
+  「開啟定位／手動選擇位置」的卡片，使用者按一下就能解決。
+- 你只要用一句話說明需要知道他在哪裡就好，不要條列操作步驟，
+  也不要反問「請問你在哪」—— 那張卡片比打字快。`
+  }
+
+  const label = location.label?.replace(/\s+/g, ' ').trim().slice(0, MAX_LABEL_LENGTH)
+  const where = label ? `${label}附近` : '已取得座標'
+  const precision = location.precise ? '（GPS 定位）' : '（手動選擇或概略位置，不是精準定位）'
+
+  return `
+
+目前的位置狀態：已知使用者在${where}${precision}。
+- 使用者說「這裡」「目前位置」「我現在的地方」時就是指這裡，直接規劃，不要反問他在哪。
+- 需要地點的工具（plan_route 的 from、get_weather 的 place、search_activities 的 area）
+  在使用者沒明講另一個地點時，一律**不要帶**那個參數，系統會自動用這個位置。`
+}
+
+const systemFor = (location?: UserLocation | null) => SYSTEM + locationSection(location)
 
 export type ChatMessage = ModelMessage
 
@@ -76,12 +119,13 @@ export function streamAgentReply(
   messages: ChatMessage[],
   onError?: (error: unknown) => void,
   userRef: string = FALLBACK_USER_REF,
+  location?: UserLocation | null,
 ) {
   return streamText({
     model: agentModel(),
-    system: SYSTEM,
+    system: systemFor(location),
     messages,
-    tools: createTools(userRef),
+    tools: createTools(userRef, location),
     // 允許模型呼叫工具後再回一輪，最多五步避免無限迴圈
     stopWhen: stepCountIs(5),
     maxRetries: MAX_RETRIES,
@@ -113,24 +157,56 @@ export type CommuteRouteEvent = {
   usualTimeEnd: string | null
 }
 
+export type RouteOption = {
+  /** 門到門：走到起站 + 車程 + 出站走到目的地 */
+  totalMinutes: number
+  /** 只有車程 */
+  rideMinutes: number
+  transfers: number
+  legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
+}
+
 /*
  * 對話裡的動作卡片。
  *
  * 有些工具結果用講的講不清楚，或者講完之後使用者還需要做一件事 ——
- * 路線有哪幾段、附近有哪些任務、要不要直接叫車。那些變成卡片，
- * 使用者可以直接按，不用再打一次字。
+ * 路線有哪幾段、有沒有別條路可選、附近有哪些任務、要不要直接叫車。
+ * 那些變成卡片，使用者可以直接按，不用再打一次字。
  *
- * 刻意只有三種：天氣與通勤路線用一句話就講得完，硬做成卡片只是裝飾。
  * 判斷標準是「這個結果有沒有後續動作，或有沒有結構化到值得排版」。
+ * 天氣本來不在裡面，加進來是因為它從「一個溫度」變成了
+ * 「現況 + 未來幾小時 + 好幾則建議」—— 那已經講不完了。
  */
 export type AgentCard =
   | {
       kind: 'route_plan'
+      /** 使用者講的地點，可能是「目前位置」 */
       from: string
       to: string
-      totalMinutes: number
-      transfers: number
-      legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
+      fromStation: string
+      toStation: string
+      /** 走到起站、出站走到目的地各要幾分鐘。就在站上時是 0。 */
+      fromWalkMinutes: number
+      toWalkMinutes: number
+      /** [0] 是建議路線，其餘是使用者可以自己選的 */
+      routes: RouteOption[]
+    }
+  | {
+      kind: 'weather'
+      place: string
+      temperatureC: number
+      feelsLikeC: number
+      condition: string
+      uvIndex: number
+      uvLevel: string
+      advices: Array<{ kind: string; title: string; body: string }>
+      outlook: {
+        hours: number
+        minTemperatureC: number
+        maxTemperatureC: number
+        maxPrecipitationProbability: number
+        rainStartsAt: string | null
+      } | null
     }
   | {
       kind: 'missions'
@@ -139,7 +215,7 @@ export type AgentCard =
         id: string
         name: string
         campaign: string
-        /* 相對於查詢的地區，不是相對於使用者 —— 我們不知道使用者在哪 */
+        /* 相對於查詢的地區；使用者沒指定地點時才等於「離你多遠」 */
         distanceFromAreaMeters: number
         lat: number
         lon: number
@@ -153,6 +229,11 @@ export type AgentCard =
       note: string
       incidents: Array<{ title: string; description: string }>
     }
+  /*
+   * 缺位置時送出。前端會渲染成「開啟定位」與「手動選擇位置」兩個動作 ——
+   * 使用者按一下就好，比要他自己去系統設定裡找快得多。
+   */
+  | { kind: 'location_request'; message: string }
 
 export type AgentEvent =
   | { type: 'text'; value: string }
@@ -178,8 +259,8 @@ function toCommuteRouteEvent(output: unknown): CommuteRouteEvent | null {
     origin,
     destination,
     mode,
-    line: text(line),
     /* 工具的回傳是 snake_case（給模型看的），事件則跟前端的型別對齊 */
+    line: text(line),
     usualDays: Array.isArray(r.usual_days)
       ? r.usual_days.filter((d): d is string => typeof d === 'string')
       : [],
@@ -196,34 +277,103 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 const asString = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
 const asNumber = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
+function toLegs(raw: unknown): RouteOption['legs'] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item) => {
+    const l = asRecord(item)
+    const line = l && asString(l.line)
+    const from = l && asString(l.from)
+    const to = l && asString(l.to)
+    const stops = l && asNumber(l.stops)
+    const minutes = l && asNumber(l.minutes)
+    if (!line || !from || !to || stops === null || minutes === null) return []
+    return [{ line, from, to, stops, minutes }]
+  })
+}
+
 function toRoutePlanCard(output: unknown): AgentCard | null {
   const o = asRecord(output)
   if (!o || o.error) return null
 
-  const from = asString(o.from)
-  const to = asString(o.to)
-  const totalMinutes = asNumber(o.total_minutes)
-  if (!from || !to || totalMinutes === null || !Array.isArray(o.legs)) return null
+  /* from / to 是 describe() 的物件，不是字串 */
+  const from = asRecord(o.from)
+  const to = asRecord(o.to)
+  if (!from || !to) return null
 
-  const legs = o.legs.flatMap((raw) => {
-    const l = asRecord(raw)
-    const line = l && asString(l.line)
-    const lFrom = l && asString(l.from)
-    const lTo = l && asString(l.to)
-    const stops = l && asNumber(l.stops)
-    const minutes = l && asNumber(l.minutes)
-    if (!line || !lFrom || !lTo || stops === null || minutes === null) return []
-    return [{ line, from: lFrom, to: lTo, stops, minutes }]
+  const fromLabel = asString(from.label)
+  const toLabel = asString(to.label)
+  const fromStation = asString(from.station)
+  const toStation = asString(to.station)
+  if (!fromLabel || !toLabel || !fromStation || !toStation) return null
+
+  if (!Array.isArray(o.routes)) return null
+
+  const routes = o.routes.flatMap((raw): RouteOption[] => {
+    const r = asRecord(raw)
+    if (!r) return []
+    const rideMinutes = asNumber(r.ride_minutes)
+    const totalMinutes = asNumber(r.total_minutes)
+    if (rideMinutes === null || totalMinutes === null) return []
+    const legs = toLegs(r.legs)
+    if (legs.length === 0) return []
+    return [{ totalMinutes, rideMinutes, transfers: asNumber(r.transfers) ?? 0, legs }]
   })
-  if (legs.length === 0) return null
+  /* 一條都排不出來時（起訖同站）不要給空卡片，讓模型用文字說明 */
+  if (routes.length === 0) return null
 
   return {
     kind: 'route_plan',
-    from,
-    to,
-    totalMinutes,
-    transfers: asNumber(o.transfers) ?? 0,
-    legs,
+    from: fromLabel,
+    to: toLabel,
+    fromStation,
+    toStation,
+    fromWalkMinutes: asNumber(from.walk_minutes_to_station) ?? 0,
+    toWalkMinutes: asNumber(to.walk_minutes_to_station) ?? 0,
+    routes,
+  }
+}
+
+function toWeatherCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error) return null
+
+  const place = asString(o.place)
+  const temperatureC = asNumber(o.temperature_c)
+  if (!place || temperatureC === null) return null
+
+  const advices = Array.isArray(o.advice)
+    ? o.advice.flatMap((raw) => {
+        const a = asRecord(raw)
+        const title = a && asString(a.title)
+        if (!title) return []
+        return [{ kind: asString(a.kind) ?? '', title, body: asString(a.body) ?? '' }]
+      })
+    : []
+
+  const f = asRecord(o.forecast)
+  const hours = f && asNumber(f.hours)
+  const minTemperatureC = f && asNumber(f.min_temperature_c)
+  const maxTemperatureC = f && asNumber(f.max_temperature_c)
+
+  return {
+    kind: 'weather',
+    place,
+    temperatureC,
+    feelsLikeC: asNumber(o.feels_like_c) ?? temperatureC,
+    condition: asString(o.condition) ?? '—',
+    uvIndex: asNumber(o.uv_index) ?? 0,
+    uvLevel: asString(o.uv_level) ?? '',
+    advices,
+    outlook:
+      f && hours !== null && minTemperatureC !== null && maxTemperatureC !== null
+        ? {
+            hours,
+            minTemperatureC,
+            maxTemperatureC,
+            maxPrecipitationProbability: asNumber(f.max_precipitation_probability) ?? 0,
+            rainStartsAt: asString(f.rain_starts_at),
+          }
+        : null,
   }
 }
 
@@ -286,7 +436,17 @@ function toTransitStatusCard(output: unknown): AgentCard | null {
 
 /** 工具名稱 → 卡片。不在這張表裡的工具就只有文字回覆。 */
 function toCard(toolName: string, output: unknown): AgentCard | null {
+  /*
+   * 缺位置的優先權高於工具本身：不論是天氣、路線還是找任務缺了位置，
+   * 使用者要做的事情都一樣（開定位或手動選），所以給同一張卡。
+   */
+  const o = asRecord(output)
+  if (o?.need_location === true) {
+    return { kind: 'location_request', message: asString(o.error) ?? '需要知道你的位置' }
+  }
+
   if (toolName === 'plan_route') return toRoutePlanCard(output)
+  if (toolName === 'get_weather') return toWeatherCard(output)
   if (toolName === 'search_activities') return toMissionsCard(output)
   if (toolName === 'get_transit_status') return toTransitStatusCard(output)
   return null
@@ -307,6 +467,7 @@ function toCard(toolName: string, output: unknown): AgentCard | null {
 export async function* streamAgentReplyWithFallback(
   messages: ChatMessage[],
   userRef: string = FALLBACK_USER_REF,
+  location?: UserLocation | null,
 ): AsyncGenerator<AgentEvent, void, unknown> {
   const chain = modelChain()
   let lastError: unknown
@@ -314,12 +475,17 @@ export async function* streamAgentReplyWithFallback(
   for (const [index, modelId] of chain.entries()) {
     let streamError: unknown
     let emitted = false
+    /*
+     * 模型常在同一輪同時呼叫天氣與路線規劃，兩個都會因為缺位置而回
+     * need_location。同一則回覆裡疊兩張一模一樣的卡片很蠢，所以只送第一張。
+     */
+    let locationRequested = false
 
     const result = streamText({
       model: agentModel(modelId),
-      system: SYSTEM,
+      system: systemFor(location),
       messages,
-      tools: createTools(userRef),
+      tools: createTools(userRef, location),
       stopWhen: stepCountIs(5),
       maxRetries: MAX_RETRIES,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
@@ -348,7 +514,12 @@ export async function* streamAgentReplyWithFallback(
           }
 
           const card = toCard(part.toolName, part.output)
-          if (card) yield { type: 'card', card }
+          if (!card) continue
+          if (card.kind === 'location_request') {
+            if (locationRequested) continue
+            locationRequested = true
+          }
+          yield { type: 'card', card }
         }
       }
     } catch (error) {

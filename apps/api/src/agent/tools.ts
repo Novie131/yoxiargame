@@ -4,60 +4,60 @@ import { z } from 'zod'
 import { hasDatabase } from '../db/client.ts'
 import { findNearbyMissions } from '../db/repositories/missions.ts'
 import { readRoute, saveRoute } from '../services/commute.ts'
-import { planMetroRoute } from '../services/route-planner.ts'
-import { getBusStatus, getMetroStatus, hasTdxCredentials, isBusCity } from '../services/tdx.ts'
-import { geocodeDistrict, getWeather } from '../services/weather.ts'
+import {
+  resolvePlaceName,
+  resolveUserLocation,
+  type ResolvedPlace,
+  type UserLocation,
+} from '../services/place.ts'
+import { planMetroRoutes } from '../services/route-planner.ts'
+import {
+  getBusStatus,
+  getMetroStatus,
+  hasTdxCredentials,
+  haversineMeters,
+  isBusCity,
+} from '../services/tdx.ts'
+import { getWeather } from '../services/weather.ts'
 
 /*
  * Agent 可用的工具。
  *
- * 通勤路線、天氣、捷運與公車即時狀態都已接上真實來源；
- * estimate_ride 與 search_activities 仍回假資料，數值刻意對齊 Document/ 的設計稿，
+ * 通勤路線、天氣、路徑規劃、捷運與公車即時狀態都已接上真實來源；
+ * estimate_ride 仍回假資料，數值刻意對齊 Document/ 的設計稿，
  * 之後接真實來源時只要換掉 execute 的內容。
  *
  * 工具分兩類：
- *   sharedTools  跟使用者無關，模組層定義一次即可
- *   createTools  綁定單一使用者的工具（讀寫通勤路線），每次請求建立
+ *   sharedTools  跟使用者與位置都無關，模組層定義一次即可
+ *   createTools  綁定這一次請求的使用者與位置，每次請求建立
  *
- * 之所以要分開：通勤路線必須寫在發話者身上。在有 createTools 之前，
- * 所有人都被記成同一個 'dev-user'，等於共用一條路線。
+ * 之所以要分開：通勤路線必須寫在發話者身上（在有 createTools 之前，
+ * 所有人都被記成同一個 'dev-user'），而位置是逐次請求變動的 ——
+ * 使用者在板橋跟在信義區問「附近有什麼」，答案不該一樣。
  */
 
+/*
+ * 需要位置卻沒有位置時的回傳。
+ *
+ * 一定要是**結構化**的旗標而不是一句錯誤字串：agent/index.ts 看到
+ * need_location 就會送一張「開啟定位／手動選擇」的卡片給前端，
+ * 使用者按一下就解決了。只回文字的話，模型只能叫使用者「去設定裡打開」，
+ * 而那句話在 App 裡是按不動的。
+ */
+const needLocation = (what: string) => ({
+  error: `需要知道你的位置才能${what}`,
+  need_location: true,
+})
+
+/** 解析結果 → 給模型看的形狀。走路時間一定要帶，那是誠實範圍的一部分。 */
+const describe = (place: ResolvedPlace) => ({
+  label: place.label,
+  station: place.station?.name ?? null,
+  walk_minutes_to_station: place.station?.walkMinutes ?? null,
+  metro_reachable: place.metroReachable,
+})
+
 const sharedTools = {
-  get_weather: tool({
-    description: '查詢指定行政區目前的天氣、氣溫、紫外線指數與降雨。',
-    inputSchema: z.object({
-      district: z.string().describe('行政區，例如「信義區」「大安區」'),
-    }),
-    /*
-     * 真實資料。查不到地點或外部服務掛掉時回傳 error 欄位，
-     * 讓模型照實說「查不到」，而不是自己編一個溫度出來。
-     */
-    execute: async ({ district }) => {
-      try {
-        const place = await geocodeDistrict(district)
-        if (!place) return { district, error: `查不到「${district}」這個地點` }
-
-        const w = await getWeather(place.lat, place.lon)
-        return {
-          district: w.location ?? district,
-          temperature_c: w.temperatureC,
-          feels_like_c: w.feelsLikeC,
-          humidity_percent: w.humidity,
-          condition: w.condition,
-          precipitation_mm: w.precipitationMm,
-          uv_index: w.uvIndex,
-          uv_level: w.uvLevel,
-          advice: w.advice ? `${w.advice.title}，${w.advice.body}` : null,
-          observed_at: w.observedAt,
-        }
-      } catch (error) {
-        console.error('[get_weather]', error)
-        return { district, error: '天氣服務暫時無法取得' }
-      }
-    },
-  }),
-
   get_transit_status: tool({
     description:
       '查詢捷運或公車路線目前的營運狀況與事件通報。使用者問通勤、路線正不正常時使用。',
@@ -130,52 +130,17 @@ const sharedTools = {
     },
   }),
 
-  plan_route: tool({
-    description:
-      '規劃兩個捷運站之間的最佳路線，回傳預估時間、轉乘次數與每一段搭哪條線。' +
-      '使用者問「怎麼去」「要多久」「要轉幾次車」時使用。',
-    inputSchema: z.object({
-      from: z.string().describe('出發站，例如「板橋」'),
-      to: z.string().describe('目的站，例如「市政府」'),
-    }),
-    /*
-     * 時間的組成要講清楚，模型才不會把它說成保證值：
-     * 行駛與停靠是 TDX 的實際數據，轉乘步行也是，只有轉乘等車是估計，
-     * 而且完全沒有算「等第一班車」。
-     */
-    execute: async ({ from, to }) => {
-      if (!hasTdxCredentials()) {
-        return { from, to, error: 'TDX 金鑰未設定，無法規劃路線' }
-      }
-
-      try {
-        const plan = await planMetroRoute(from, to)
-        if (!plan) {
-          return { from, to, error: `查不到「${from}」到「${to}」的捷運路線` }
-        }
-
-        return {
-          from: plan.from,
-          to: plan.to,
-          data_source: 'tdx',
-          total_minutes: plan.totalMinutes,
-          transfers: plan.transfers,
-          legs: plan.legs,
-          note: '時間為估計值，不含等第一班車的時間',
-        }
-      } catch (error) {
-        console.error('[plan_route]', error)
-        return { from, to, error: '路線規劃暫時無法使用' }
-      }
-    },
-  }),
-
   estimate_ride: tool({
     description: '估算兩地之間的計程車車程時間與車資區間。使用者想叫車或比較交通方式時使用。',
     inputSchema: z.object({
       from: z.string().describe('上車地點'),
       to: z.string().describe('下車地點'),
     }),
+    /*
+     * 假資料，數值對齊 Document/yoxi-ride-estimate.png。
+     * 注意這跟 trip-options.ts「沒有來源就不給數字」的立場是矛盾的 ——
+     * 接上 yoxi 的估價 API 之前，這裡回的車資與時間都不能當真。
+     */
     execute: async ({ from, to }) => ({
       from,
       to,
@@ -183,84 +148,273 @@ const sharedTools = {
       duration_minutes: 15,
       fare_twd: { min: 250, max: 320 },
       eta: '14:25',
+      data_source: 'mock',
     }),
-  }),
-
-  search_activities: tool({
-    description:
-      '搜尋某個地點附近正在進行的探索任務，會回傳任務名稱、所屬活動與距離。' +
-      '使用者問「附近有什麼好玩的」「這附近有什麼活動」時使用。',
-    inputSchema: z.object({
-      area: z.string().describe('地點，例如「大安森林公園」「信義區」'),
-      interests: z
-        .array(
-          z.enum([
-            'food', 'travel', 'sport', 'music', 'photo',
-            'reading', 'movie', 'tech', 'bar', 'coffee',
-          ]),
-        )
-        .optional()
-        .describe(
-          '興趣標籤，用來過濾任務。使用者有講偏好才帶（「想喝咖啡」→ coffee）。' +
-            '沒講就不要帶，會回傳全部。',
-        ),
-    }),
-    /*
-     * 真實資料：地點先地理編碼，再用 PostGIS 的 ST_DWithin 查 missions，
-     * 有帶 interests 就再做標籤交集（吃 GIN 索引）。
-     *
-     * 注意標籤裡**沒有**任何 Pokémon GO / Pikmin 的資料 —— 我們跟那兩款遊戲
-     * 沒有實際整合，所以沒有任何任務掛那些標籤，也不該讓模型假裝有。
-     */
-    execute: async ({ area, interests }) => {
-      if (!hasDatabase()) return { area, error: '任務資料庫未設定' }
-
-      try {
-        const place = await geocodeDistrict(area)
-        if (!place) return { area, error: `查不到「${area}」這個地點` }
-
-        const missions = await findNearbyMissions(place.lat, place.lon, 3000, 10, interests)
-        /*
-         * 地理編碼回的是完整地址（「大安森林公園, 溫州街, 龍坡里, 大安區, …」），
-         * 整串塞進卡片標題會很醜。取第一段就是使用者認得的地名。
-         */
-        const areaName = place.displayName?.split(',')[0]?.trim() || area
-        return {
-          area: areaName,
-          data_source: 'missions',
-          filtered_by: interests ?? null,
-          count: missions.length,
-          missions: missions.map((m) => ({
-            /* 前端的卡片用它做 deep link，直接打開那個任務的面板 */
-            id: m.id,
-            name: m.name,
-            campaign: m.campaign,
-            /*
-             * 距離是相對於「查詢的那個地區」，不是相對於使用者本人 ——
-             * 我們不知道使用者現在在哪。所以這裡刻意沒有 in_range，
-             * 免得模型講出「你已經在範圍內」這種它無從得知的話。
-             */
-            distance_from_area_meters: m.distanceMeters,
-            tags: m.tags,
-            /* 座標是給前端的任務卡用的：沒有它就按不了「叫車前往」 */
-            lat: m.lat,
-            lon: m.lon,
-          })),
-        }
-      } catch (error) {
-        console.error('[search_activities]', error)
-        return { area, error: '任務搜尋暫時無法使用' }
-      }
-    },
   }),
 }
 
 /**
- * 綁定單一使用者的工具集。每次請求呼叫一次，userRef 來自 identity.readUserRef。
+ * 綁定這一次請求的工具集。
+ * userRef 來自 identity.readUserRef；location 是前端帶進來的定位，可能沒有。
  */
-export function createTools(userRef: string) {
+export function createTools(userRef: string, location?: UserLocation | null) {
+  /*
+   * 當前位置只解析一次。同一輪對話裡模型常常先查天氣再規劃路線，
+   * 每個工具各解析一次的話，反向地理編碼與最近車站都會重複打。
+   */
+  let currentPlace: Promise<ResolvedPlace> | null = null
+  const here = () => {
+    if (!location) return null
+    currentPlace ??= resolveUserLocation(location)
+    return currentPlace
+  }
+
+  /* 有給地名就查地名，沒給就用當前位置。兩者都沒有時回 null。 */
+  const resolve = async (name?: string): Promise<ResolvedPlace | null> => {
+    const query = name?.trim()
+    if (query) return resolvePlaceName(query)
+    return (await here()) ?? null
+  }
+
   return {
     ...sharedTools,
+
+    get_weather: tool({
+      description:
+        '查詢天氣：目前的氣溫、體感溫度、天氣狀況、紫外線與降雨，' +
+        '以及未來幾小時的降雨機率與溫度區間，並附上該穿什麼、要不要帶傘的建議。' +
+        '使用者問天氣、要出門、或你要提醒他穿著與帶傘時使用。',
+      inputSchema: z.object({
+        place: z
+          .string()
+          .optional()
+          .describe(
+            '地點，例如「信義區」「台北車站」。' +
+              '使用者問的是他所在地的天氣（「今天天氣如何」「等一下會下雨嗎」）時' +
+              '**不要帶**這個參數，系統會用他的定位。',
+          ),
+      }),
+      /*
+       * 真實資料。查不到地點或外部服務掛掉時回傳 error 欄位，
+       * 讓模型照實說「查不到」，而不是自己編一個溫度出來。
+       */
+      execute: async ({ place }) => {
+        try {
+          const resolved = await resolve(place)
+          if (!resolved) {
+            return place
+              ? { place, error: `查不到「${place}」這個地點` }
+              : needLocation('查你所在地的天氣')
+          }
+
+          const w = await getWeather(resolved.lat, resolved.lon)
+          return {
+            place: w.location ?? resolved.label,
+            data_source: 'open-meteo',
+            temperature_c: w.temperatureC,
+            feels_like_c: w.feelsLikeC,
+            humidity_percent: w.humidity,
+            condition: w.condition,
+            precipitation_mm: w.precipitationMm,
+            uv_index: w.uvIndex,
+            uv_level: w.uvLevel,
+            /* 未來幾小時。回答「等一下要不要帶傘」全靠這一段。 */
+            forecast: w.outlook && {
+              hours: w.outlook.hours,
+              min_temperature_c: w.outlook.minTemperatureC,
+              max_temperature_c: w.outlook.maxTemperatureC,
+              max_precipitation_probability: w.outlook.maxPrecipitationProbability,
+              rain_starts_at: w.outlook.rainStartsAt,
+              max_uv_index: w.outlook.maxUvIndex,
+            },
+            /* 已經按重要性排好，第一則就是最該講的 */
+            advice: w.advices.map((a) => ({ kind: a.kind, title: a.title, body: a.body })),
+            observed_at: w.observedAt,
+          }
+        } catch (error) {
+          console.error('[get_weather]', error)
+          return { place: place ?? null, error: '天氣服務暫時無法取得' }
+        }
+      },
+    }),
+
+    plan_route: tool({
+      description:
+        '規劃兩地之間的捷運路線，回傳建議路線與其他可選路線，' +
+        '每條都含預估時間、轉乘次數與每一段搭哪條線，並含兩端的步行時間。' +
+        '使用者問「怎麼去」「幫我安排到某地」「要多久」「要轉幾次車」時使用。',
+      inputSchema: z.object({
+        from: z
+          .string()
+          .optional()
+          .describe(
+            '出發地，例如「板橋」「台北 101」。' +
+              '使用者說「從我這裡」「目前位置」或根本沒講出發地時**不要帶**，' +
+              '系統會用他的定位。',
+          ),
+        to: z.string().describe('目的地，例如「台北車站」「市政府」「大安森林公園」'),
+      }),
+      /*
+       * 時間的組成要講清楚，模型才不會把它說成保證值：
+       * 行駛與停靠是 TDX 的實際數據，轉乘步行也是，只有轉乘等車是估計，
+       * 兩端的步行時間則是由直線距離估的，而且完全沒有算「等第一班車」。
+       */
+      execute: async ({ from, to }) => {
+        if (!hasTdxCredentials()) {
+          return { from: from ?? null, to, error: 'TDX 金鑰未設定，無法規劃路線' }
+        }
+
+        try {
+          const [origin, destination] = await Promise.all([resolve(from), resolvePlaceName(to)])
+
+          if (!origin) {
+            return from
+              ? { from, to, error: `查不到「${from}」這個地點` }
+              : needLocation('規劃從你現在的位置出發的路線')
+          }
+          if (!destination) return { from: origin.label, to, error: `查不到「${to}」這個地點` }
+
+          if (!origin.station || !destination.station) {
+            return {
+              from: origin.label,
+              to: destination.label,
+              error: '這兩個地點之間沒有可用的捷運站，我沒辦法規劃捷運路線',
+            }
+          }
+
+          /* 兩端最近的是同一站，代表捷運幫不上忙 —— 照實說，不要硬排一條路線 */
+          if (origin.station.name === destination.station.name) {
+            return {
+              from: origin.label,
+              to: destination.label,
+              routes: [],
+              same_station: origin.station.name,
+              straight_line_meters: Math.round(
+                haversineMeters(origin.lat, origin.lon, destination.lat, destination.lon),
+              ),
+              note: '兩地最近的捷運站是同一站，走路或叫車比較合理',
+            }
+          }
+
+          const routes = await planMetroRoutes(origin.station.name, destination.station.name)
+          if (!routes) {
+            return {
+              from: origin.label,
+              to: destination.label,
+              error: `查不到「${origin.station.name}」到「${destination.station.name}」的捷運路線`,
+            }
+          }
+
+          const walk = origin.station.walkMinutes + destination.station.walkMinutes
+          const plans = [routes.best, ...routes.alternatives]
+
+          return {
+            from: describe(origin),
+            to: describe(destination),
+            data_source: 'tdx',
+            /* 建議路線的門到門時間：走到起站 + 車程 + 出站走到目的地 */
+            total_minutes: walk + routes.best.totalMinutes,
+            /* 第一條是建議路線，其餘是使用者可以自己選的替代方案 */
+            routes: plans.map((p) => ({
+              ride_minutes: p.totalMinutes,
+              total_minutes: walk + p.totalMinutes,
+              transfers: p.transfers,
+              legs: p.legs,
+            })),
+            note:
+              '時間為估計值，不含等第一班車的時間；兩端步行時間由直線距離估算' +
+              (origin.metroReachable && destination.metroReachable
+                ? ''
+                : '。其中一端離捷運站較遠，這段路可能適合叫車'),
+          }
+        } catch (error) {
+          console.error('[plan_route]', error)
+          return { from: from ?? null, to, error: '路線規劃暫時無法使用' }
+        }
+      },
+    }),
+
+    search_activities: tool({
+      description:
+        '搜尋某個地點附近正在進行的探索任務，會回傳任務名稱、所屬活動與距離。' +
+        '使用者問「附近有什麼好玩的」「這附近有什麼活動」時使用。',
+      inputSchema: z.object({
+        area: z
+          .string()
+          .optional()
+          .describe(
+            '地點，例如「大安森林公園」「信義區」。' +
+              '使用者說「附近」「這裡」時**不要帶**，系統會用他的定位。',
+          ),
+        interests: z
+          .array(
+            z.enum([
+              'food', 'travel', 'sport', 'music', 'photo',
+              'reading', 'movie', 'tech', 'bar', 'coffee',
+            ]),
+          )
+          .optional()
+          .describe(
+            '興趣標籤，用來過濾任務。使用者有講偏好才帶（「想喝咖啡」→ coffee）。' +
+              '沒講就不要帶，會回傳全部。',
+          ),
+      }),
+      /*
+       * 真實資料：地點先解析成座標，再用 PostGIS 的 ST_DWithin 查 missions，
+       * 有帶 interests 就再做標籤交集（吃 GIN 索引）。
+       *
+       * 注意標籤裡**沒有**任何 Pokémon GO / Pikmin 的資料 —— 我們跟那兩款遊戲
+       * 沒有實際整合，所以沒有任何任務掛那些標籤，也不該讓模型假裝有。
+       */
+      execute: async ({ area, interests }) => {
+        if (!hasDatabase()) return { area: area ?? null, error: '任務資料庫未設定' }
+
+        try {
+          const resolved = await resolve(area)
+          if (!resolved) {
+            return area
+              ? { area, error: `查不到「${area}」這個地點` }
+              : needLocation('找你附近的任務')
+          }
+
+          const missions = await findNearbyMissions(
+            resolved.lat,
+            resolved.lon,
+            3000,
+            10,
+            interests,
+          )
+
+          return {
+            area: resolved.label,
+            data_source: 'missions',
+            filtered_by: interests ?? null,
+            count: missions.length,
+            missions: missions.map((m) => ({
+              /* 前端的卡片用它做 deep link，直接打開那個任務的面板 */
+              id: m.id,
+              name: m.name,
+              campaign: m.campaign,
+              /*
+               * 距離是相對於「查詢的那個地點」。使用者沒給地點時那就是他
+               * 自己的位置，這時距離才等於「離你多遠」；有給地點時不是，
+               * 所以欄位名一律講清楚是相對於哪裡。
+               */
+              distance_from_area_meters: m.distanceMeters,
+              tags: m.tags,
+              /* 座標是給前端的任務卡用的：沒有它就按不了「叫車前往」 */
+              lat: m.lat,
+              lon: m.lon,
+            })),
+            /* 模型要知道這批距離是不是「離使用者」的距離 */
+            area_is_user_location: resolved.source === 'coordinates',
+          }
+        } catch (error) {
+          console.error('[search_activities]', error)
+          return { area: area ?? null, error: '任務搜尋暫時無法使用' }
+        }
+      },
+    }),
 
     save_commute_route: tool({
       description:

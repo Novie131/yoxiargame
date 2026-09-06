@@ -1,5 +1,6 @@
 import { API_URL } from './api'
 import { parseRoute, type CommuteRoute } from './commute'
+import { currentLocation } from './location'
 import { userHeaders } from './userRef'
 
 /*
@@ -16,17 +17,55 @@ export type ChatMessage = { role: ChatRole; content: string }
 /*
  * 對話裡的動作卡片。形狀必須跟後端 agent/index.ts 的 AgentCard 一致。
  *
- * 只有三種工具會產生卡片（路線規劃、附近任務、路況）—— 判斷標準是
- * 「這個結果有沒有後續動作，或有沒有結構化到值得排版」。
- * 天氣、通勤路線用一句話講得完，做成卡片只是裝飾。
+ * 判斷標準是「這個結果有沒有後續動作，或有沒有結構化到值得排版」。
+ * 通勤路線用一句話講得完，做成卡片只是裝飾，所以它沒有卡片。
+ * 天氣本來也不在裡面，加進來是因為它從「一個溫度」變成了
+ * 「現況 + 未來幾小時 + 好幾則建議」—— 那已經講不完了。
  */
-export type RoutePlanCard = {
-  kind: 'route_plan'
-  from: string
-  to: string
+export type RouteOption = {
+  /** 門到門：走到起站 + 車程 + 出站走到目的地 */
   totalMinutes: number
+  /** 只有車程 */
+  rideMinutes: number
   transfers: number
   legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
+}
+
+export type RoutePlanCard = {
+  kind: 'route_plan'
+  /** 使用者講的地點，可能是「目前位置」 */
+  from: string
+  to: string
+  fromStation: string
+  toStation: string
+  fromWalkMinutes: number
+  toWalkMinutes: number
+  /** [0] 是建議路線，其餘讓使用者自己選 */
+  routes: RouteOption[]
+}
+
+export type WeatherCard = {
+  kind: 'weather'
+  place: string
+  temperatureC: number
+  feelsLikeC: number
+  condition: string
+  uvIndex: number
+  uvLevel: string
+  advices: Array<{ kind: string; title: string; body: string }>
+  outlook: {
+    hours: number
+    minTemperatureC: number
+    maxTemperatureC: number
+    maxPrecipitationProbability: number
+    rainStartsAt: string | null
+  } | null
+}
+
+/* 缺位置時後端會送這張，前端渲染成「開啟定位」與「手動選擇」兩個動作 */
+export type LocationRequestCard = {
+  kind: 'location_request'
+  message: string
 }
 
 export type MissionsCard = {
@@ -52,7 +91,12 @@ export type TransitStatusCard = {
   incidents: Array<{ title: string; description: string }>
 }
 
-export type AgentCard = RoutePlanCard | MissionsCard | TransitStatusCard
+export type AgentCard =
+  | RoutePlanCard
+  | WeatherCard
+  | MissionsCard
+  | TransitStatusCard
+  | LocationRequestCard
 
 export type AgentEvent =
   | { type: 'text'; value: string }
@@ -88,7 +132,13 @@ function parseEvent(line: string): AgentEvent | null {
      */
     if (typeof card === 'object' && card !== null) {
       const kind = (card as { kind?: unknown }).kind
-      if (kind === 'route_plan' || kind === 'missions' || kind === 'transit_status') {
+      if (
+        kind === 'route_plan' ||
+        kind === 'weather' ||
+        kind === 'missions' ||
+        kind === 'transit_status' ||
+        kind === 'location_request'
+      ) {
         return { type: 'card', card: card as AgentCard }
       }
     }
@@ -106,10 +156,26 @@ export async function streamAgentReply(
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  /*
+   * 位置跟著每一次發話帶上去。
+   *
+   * 刻意每次都重新讀而不是在建立對話時取一次：使用者是會移動的，
+   * 而且他可能中途才按下「開啟定位」——那之後的每一句話都該用得到。
+   *
+   * 退路座標（信義區）**不送**。送了的話後端會以為使用者真的在信義區，
+   * 然後給他一條從市政府站出發的路線，而他人在台中。寧可讓後端回
+   * need_location，畫面跳出「開啟定位／手動選擇」讓他自己說。
+   */
+  const here = currentLocation()
+  const location =
+    here.source === 'fallback'
+      ? undefined
+      : { lat: here.lat, lon: here.lon, precise: here.precise, label: here.label }
+
   const res = await fetch(`${API_URL}/agent/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, location }),
     signal,
   })
 
