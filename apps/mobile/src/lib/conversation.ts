@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 
 import { streamAgentReply, type AgentCard, type ChatMessage } from './agent'
 import { applyRoute } from './commute'
+import { addTrip } from './trips'
 
 /*
  * 對話狀態放在模組層而不是畫面裡。
@@ -83,6 +84,12 @@ export function createConversation(intro?: string) {
         } else if (event.type === 'card') {
           cards = [...cards, event.card]
           render()
+        } else if (event.type === 'planned_trip') {
+          /*
+           * 模型在這一輪把行程加進去了。同步到本地 store，行程頁才會立刻
+           * 出現那一筆 —— 跟 commute_route 一樣，這是狀態改變不是資訊。
+           */
+          addTrip(event.trip)
         } else if (event.type === 'commute_route') {
           /*
            * 模型在這一輪把通勤路線存進後端了。同步到 store，行程頁才會

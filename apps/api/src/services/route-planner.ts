@@ -54,6 +54,12 @@ export type RouteLeg = {
   lineId: string
   from: string
   to: string
+  /*
+   * 站 id。畫面用不到（卡片顯示的是站名），但查首末班車時刻表一定要它 ——
+   * 那份資料是以 StationID 索引的，而且同名站在不同線上是不同的 id。
+   */
+  fromStationId: string
+  toStationId: string
   /** 這一段搭幾站 */
   stops: number
   minutes: number
@@ -396,6 +402,8 @@ function toLegs(g: Graph, path: NodeId[]): { legs: RouteLeg[]; totalSeconds: num
           lineId: legStart.lineId,
           from: g.stationName.get(legStart.stationId) ?? legStart.stationId,
           to: g.stationName.get(from.stationId) ?? from.stationId,
+          fromStationId: legStart.stationId,
+          toStationId: from.stationId,
           stops,
           minutes: Math.round(legSeconds / 60),
         })
@@ -416,6 +424,8 @@ function toLegs(g: Graph, path: NodeId[]): { legs: RouteLeg[]; totalSeconds: num
       lineId: legStart.lineId,
       from: g.stationName.get(legStart.stationId) ?? legStart.stationId,
       to: g.stationName.get(last.stationId) ?? last.stationId,
+      fromStationId: legStart.stationId,
+      toStationId: last.stationId,
       stops,
       minutes: Math.round(legSeconds / 60),
     })

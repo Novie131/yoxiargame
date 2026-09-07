@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router'
 import { TransitStatusBadge } from '@/components/TransitStatus'
 import { BellIcon } from '@/components/icons'
 import { metroLineOf, useCommuteRoute, type CommuteRoute } from '@/lib/commute'
-import { formatDateWithWeekday, greeting } from '@/lib/datetime'
+import { formatDateWithWeekday, greeting, timeAfterMinutes } from '@/lib/datetime'
 import { useMember } from '@/lib/member'
 import { useNotifications } from '@/lib/notifications'
 import { useRoutePlan } from '@/lib/routePlan'
+import { removeTrip, useTrips, type PlannedTrip } from '@/lib/trips'
 import { useMetroStatus } from '@/lib/transit'
 
 /*
@@ -23,7 +24,16 @@ import { useMetroStatus } from '@/lib/transit'
  *   通勤時間     TDX 的實際站間行駛時間，由 /transit/plan 算出來
  *
  * 「約 N 分鐘」曾經是寫死的 25 分。現在它有真實來源了，但仍然是估計值 ——
- * 不含等第一班車，所以一律寫「約」。
+ * 一律寫「約」。
+ *
+ * 這一頁有**兩種**東西，刻意分成兩區，不要混在一起：
+ *
+ *   今天的行程  一次性。使用者在對話裡規劃完、自己按了「加入今天行程」才會有。
+ *               跨日就消失（lib/trips.ts）。
+ *   常用路線    重複發生的通勤，一人一條，驅動異常通知。
+ *
+ * 分開的理由是：一次性的規劃不該覆蓋掉他每天上班的那條路線 ——
+ * 那是他早上唯一會看的東西。
  */
 
 const MODE_LABEL: Record<CommuteRoute['mode'], string> = {
@@ -52,6 +62,42 @@ function DarkStatusLine({ line }: { line: string }) {
   )
 }
 
+/*
+ * 「現在出發的話幾點到」。
+ *
+ * 設計稿寫的是「建議 08:05 出發・預計 08:32 抵達」，但那需要知道使用者
+ * 「幾點要到」才能反推出發時間，而我們沒有收集那個欄位。所以這裡改成
+ * 從現在正推 —— 一樣有用，而且每個數字都有依據。
+ *
+ * 捷運收班時不講抵達時間，講末班與首班：那時候「預計 04:20 抵達」是假的。
+ */
+function ArrivalLine({ route }: { route: CommuteRoute }) {
+  const plan = useRoutePlan(
+    route.mode === 'bus' ? null : route.origin,
+    route.mode === 'bus' ? null : route.destination,
+  )
+
+  if (plan.status !== 'ready') return null
+
+  if (plan.plan.service.status === 'closed') {
+    const { line, lastTrain, firstTrain } = plan.plan.service
+    return (
+      <p className="mt-2 text-[13px] text-white/85">
+        <span className="mr-1.5">🌙</span>
+        {line}目前沒有營運・末班 {lastTrain}、首班 {firstTrain}
+      </p>
+    )
+  }
+
+  return (
+    <p className="mt-2 text-[13px] text-white/85">
+      <span className="mr-1.5">🕘</span>
+      現在出發約 {plan.plan.totalMinutes} 分鐘・預計 {timeAfterMinutes(plan.plan.totalMinutes)} 抵達
+      {plan.plan.peak && '（尖峰）'}
+    </p>
+  )
+}
+
 /* 已設定路線時，才有「下一段行程」可言 */
 function NextLegCard({ route }: { route: CommuteRoute }) {
   const { displayName } = useMember()
@@ -63,6 +109,8 @@ function NextLegCard({ route }: { route: CommuteRoute }) {
         {greeting()}，{displayName}
       </p>
       <h2 className="mt-1 text-[20px] font-bold">下一段：前往{route.destination}</h2>
+
+      <ArrivalLine route={route} />
 
       {line ? (
         <DarkStatusLine line={line} />
@@ -141,9 +189,10 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
     route.mode === 'bus' ? null : route.destination,
   )
 
+  /* 這個「約 N 分鐘」現在含依班距估算的等車，所以尖峰離峰看到的數字會不一樣 */
   const summary =
     plan.status === 'ready'
-      ? `約 ${plan.plan.totalMinutes} 分鐘${plan.plan.transfers > 0 ? `・轉乘 ${plan.plan.transfers} 次` : '・直達'}`
+      ? `約 ${plan.plan.totalMinutes} 分鐘${plan.plan.transfers > 0 ? `・轉乘 ${plan.plan.transfers} 次` : '・直達'}${plan.plan.peak ? '・尖峰' : ''}`
       : plan.status === 'loading'
         ? '計算路線中…'
         : null
@@ -190,10 +239,43 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
   )
 }
 
+/*
+ * 一筆今天的行程。
+ *
+ * 刻意做得比常用路線卡輕 —— 它是使用者今天臨時決定的一趟，
+ * 不是需要長期追蹤的東西。所以不查即時狀態、也沒有大顆的 CTA。
+ */
+function TodayTripCard({ trip, onRemove }: { trip: PlannedTrip; onRemove: () => void }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-[0_2px_12px_rgba(22,32,55,.06)]">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[15px] font-semibold">
+          {trip.from} → {trip.to}
+        </p>
+        <p className="mt-1 truncate text-[12px] text-muted">
+          <span className="mr-1.5">🚇</span>
+          {trip.lines.join(' → ')}
+          {trip.transfers > 0 ? `・轉乘 ${trip.transfers} 次` : '・直達'}
+          {`・約 ${trip.totalMinutes} 分`}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`移除 ${trip.from} 到 ${trip.to} 的行程`}
+        className="shrink-0 rounded-lg px-2.5 py-1.5 text-[13px] text-subtle"
+      >
+        移除
+      </button>
+    </div>
+  )
+}
+
 export function TripsScreen() {
   const navigate = useNavigate()
   const { route, configured } = useCommuteRoute()
   const { unreadCount } = useNotifications()
+  const trips = useTrips()
   const setup = () => navigate('/commute-setup')
 
   return (
@@ -223,6 +305,24 @@ export function TripsScreen() {
 
       <div className="space-y-4 px-4 py-4">
         {route ? <NextLegCard route={route} /> : <WelcomeCard />}
+
+        {/*
+          * 只有真的有行程才顯示這一區。空狀態留給常用路線那邊就好 ——
+          * 兩個空卡片疊在一起，使用者會以為這頁壞了。
+          */}
+        {trips.length > 0 && (
+          <>
+            <div className="flex items-baseline justify-between px-1">
+              <h2 className="text-[18px] font-bold">今天的行程</h2>
+              <span className="text-[13px] text-subtle">{trips.length} 筆</span>
+            </div>
+            <div className="space-y-3">
+              {trips.map((trip) => (
+                <TodayTripCard key={trip.id} trip={trip} onRemove={() => removeTrip(trip.id)} />
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="flex items-baseline justify-between px-1">
           <h2 className="text-[18px] font-bold">常用路線</h2>

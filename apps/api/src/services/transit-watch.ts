@@ -1,3 +1,4 @@
+import { taipeiNow, withinWindow } from './clock.ts'
 import { hasDatabase, withTransaction } from '../db/client.ts'
 import { recommendMissions } from './mission-watch.ts'
 import {
@@ -28,8 +29,6 @@ import {
  * 那樣輪詢會直接命中使用者請求也在用的那份快取，實際額外呼叫接近零。
  */
 
-/* 臺北時間。這是給台灣使用者用的服務，不跟著伺服器所在時區跑。 */
-const TIMEZONE = 'Asia/Taipei'
 
 /*
  * 靜音時段。
@@ -69,31 +68,6 @@ export type PollResult = {
 }
 
 type Now = { day: string; time: string }
-
-/** 臺北此刻的星期（mon…sun）與時間（HH:MM） */
-function taipeiNow(at: Date): Now {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: TIMEZONE,
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(at)
-
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
-  return {
-    day: get('weekday').toLowerCase(),
-    time: `${get('hour')}:${get('minute')}`,
-  }
-}
-
-/**
- * time 是否落在 [start, end] 之內。
- * start > end 代表跨午夜（22:00–02:00），這時候是「兩段的聯集」而不是空集合。
- */
-function withinWindow(time: string, start: string, end: string): boolean {
-  return start <= end ? time >= start && time <= end : time >= start || time <= end
-}
 
 /** 現在該不該打擾這個人 */
 function shouldNotify(route: WatchedRoute, now: Now): boolean {

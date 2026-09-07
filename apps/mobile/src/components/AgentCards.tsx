@@ -6,11 +6,13 @@ import type {
   AgentCard,
   LocationRequestCard,
   MissionsCard,
+  NoticeCard,
   RoutePlanCard,
   TransitStatusCard,
   WeatherCard,
 } from '@/lib/agent'
 import { lookupPlace, requestLocation, setManualLocation } from '@/lib/location'
+import { addTrip, useTrips } from '@/lib/trips'
 
 /*
  * 對話裡的動作卡片。
@@ -65,6 +67,15 @@ function RoutePlan({ card }: { card: RoutePlanCard }) {
   const route = card.routes[selected] ?? card.routes[0]
   const hasChoices = card.routes.length > 1
 
+  /*
+   * 訂閱行程，這樣按下去之後按鈕會立刻變成「已加入」——
+   * 只用本地 state 的話，同一組起訖在別張卡片上加過了，這裡還是顯示沒加。
+   */
+  const trips = useTrips()
+  const added = trips.some(
+    (t) => t.fromStation === card.fromStation && t.toStation === card.toStation,
+  )
+
   return (
     <Shell>
       <div className="flex items-center justify-between gap-2">
@@ -78,10 +89,36 @@ function RoutePlan({ card }: { card: RoutePlanCard }) {
 
       <p className="mt-1 text-[12px] text-muted">
         {route.transfers > 0 ? `轉乘 ${route.transfers} 次` : '直達'}
-        {/* 走路時間是門到門時間的一部分，要看得到，不然數字對不起來 */}
+        {/* 走路與等車都是門到門時間的一部分，要看得到，不然數字對不起來 */}
         {card.fromWalkMinutes > 0 && `・走 ${card.fromWalkMinutes} 分到${card.fromStation}`}
+        {route.waitMinutes > 0 && `・等車約 ${route.waitMinutes} 分`}
         {card.toWalkMinutes > 0 && `・出站走 ${card.toWalkMinutes} 分`}
+        {card.peak && '・尖峰'}
       </p>
+
+      {/*
+        * 收班警告。
+        *
+        * 這張卡片最重要的一行 —— 沒有它的話，凌晨兩點的使用者會看到一條
+        * 「約 6 分鐘」的漂亮路線，然後走到站門口才發現捷運關了。
+        * 所以放在路線清單**之前**，而且用警示色，不能讓人滑過去。
+        */}
+      {card.service.status === 'closed' && (
+        <div
+          className="mt-2.5 rounded-lg px-3 py-2"
+          style={{ background: 'var(--color-warning-tint)' }}
+        >
+          <p className="flex items-center gap-1.5 text-[13px] font-semibold">
+            <AlertIcon />
+            捷運目前沒有營運
+          </p>
+          <p className="mt-0.5 text-[12px] text-muted">
+            {card.service.station}
+            {card.service.line} 末班 {card.service.lastTrain}、首班 {card.service.firstTrain}。
+            下面的時間僅供參考，現在搭不到。
+          </p>
+        </div>
+      )}
 
       {/*
         * 其他路線。只有真的有第二條時才出現 ——
@@ -105,6 +142,7 @@ function RoutePlan({ card }: { card: RoutePlanCard }) {
               >
                 {i === 0 ? '建議' : `路線 ${i + 1}`} {option.totalMinutes} 分
                 {option.transfers === 0 ? '・直達' : `・轉 ${option.transfers}`}
+                {option.service === 'closed' && '・已收班'}
               </button>
             )
           })}
@@ -131,8 +169,45 @@ function RoutePlan({ card }: { card: RoutePlanCard }) {
 
       {/* 時間的組成要講清楚，不要讓使用者以為是保證值 */}
       <p className="mt-2.5 text-[11px] text-subtle">
-        時間為估計，不含等第一班車；步行時間由直線距離估算。
+        {route.waitMinutes > 0
+          ? '等車依班距估算，是期望值不是保證；步行時間由直線距離估算。'
+          : '時間為估計；步行時間由直線距離估算。'}
       </p>
+
+      {/*
+        * 加入行程是**明示**的動作，不是我們替他決定的。
+        *
+        * 「幫我安排西門町到北車」很可能只是在問路，不代表他要把它記下來；
+        * 猜錯就是往他每天早上會看的那一頁塞垃圾。但他已經在上面的藥丸裡
+        * 選好了要哪一條，所以這裡只是把那個選擇收下來，一下就好。
+        *
+        * 收班的路線不給加 —— 現在搭不到的東西放進今天的行程沒有意義。
+        */}
+      {card.service.status !== 'closed' && (
+        <button
+          type="button"
+          disabled={added}
+          onClick={() =>
+            addTrip({
+              from: card.from,
+              to: card.to,
+              fromStation: card.fromStation,
+              toStation: card.toStation,
+              lines: route.legs.map((l) => l.line),
+              transfers: route.transfers,
+              totalMinutes: route.totalMinutes,
+            })
+          }
+          className="mt-3 w-full rounded-lg py-2.5 text-[14px] font-semibold transition-transform active:scale-[.98] disabled:active:scale-100"
+          style={
+            added
+              ? { background: 'var(--color-surface)', color: 'var(--color-muted)' }
+              : { background: 'var(--color-primary)', color: '#fff' }
+          }
+        >
+          {added ? '已加入今天行程' : '加入今天行程'}
+        </button>
+      )}
     </Shell>
   )
 }
@@ -375,6 +450,26 @@ function TransitStatus({ card }: { card: TransitStatusCard }) {
   )
 }
 
+/*
+ * 工具查不到東西。
+ *
+ * 刻意做得樸素但明確 —— 它的工作是在模型講了一段編出來的路線時，
+ * 讓使用者至少看得到「這次其實沒查到」。實測發生過：TDX 額度用完，
+ * 模型照樣描述了一條不存在的轉乘路線。
+ */
+function Notice({ card }: { card: NoticeCard }) {
+  return (
+    <Shell tone="warning">
+      <p className="flex items-start gap-1.5 text-[13px]">
+        <span className="mt-0.5 shrink-0">
+          <AlertIcon />
+        </span>
+        {card.message}
+      </p>
+    </Shell>
+  )
+}
+
 export function AgentCardView({
   card,
   /* 缺位置的卡片設定好之後要重問一次，其他卡片用不到 */
@@ -387,5 +482,6 @@ export function AgentCardView({
   if (card.kind === 'weather') return <Weather card={card} />
   if (card.kind === 'location_request') return <LocationRequest card={card} onRetry={onRetry} />
   if (card.kind === 'missions') return <Missions card={card} />
+  if (card.kind === 'notice') return <Notice card={card} />
   return <TransitStatus card={card} />
 }

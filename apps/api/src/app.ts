@@ -10,6 +10,7 @@ import { getPreferences, savePreferences } from './db/repositories/preferences.t
 import { listNotifications, markRead } from './db/repositories/notifications.ts'
 import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
 import { clearRoute, readRoute, saveRoute, setNotifications } from './services/commute.ts'
+import { applySchedule } from './services/metro-schedule.ts'
 import { planMetroRoutes } from './services/route-planner.ts'
 import type { UserLocation } from './services/place.ts'
 import { compareTripOptions } from './services/trip-options.ts'
@@ -362,13 +363,41 @@ app.get('/transit/plan', async (c) => {
     const routes = await planMetroRoutes(from, to)
     if (!routes) return c.json({ error: `查不到「${from}」到「${to}」的捷運路線` }, 404)
 
-    c.header('Cache-Control', 'public, max-age=3600')
+    /* 套上「現在幾點」：等車、尖峰、以及此刻還有沒有車 */
+    const now = new Date()
+    const [best, ...alternatives] = await Promise.all(
+      [routes.best, ...routes.alternatives].map((r) => applySchedule(r, now)),
+    )
+
+    /*
+     * 快取從一小時降到兩分鐘。
+     *
+     * 這支的回應現在跟時間有關了 —— 00:30 查到的「營運中」放到 01:30 就是錯的，
+     * 而那正是最不能講錯的那一種錯。路網圖與班表在伺服器端仍然快取一天，
+     * 所以縮短用戶端快取不會多打 TDX。
+     */
+    c.header('Cache-Control', 'public, max-age=120')
+
     /*
      * 最佳路線的欄位攤平在最外層，備選另外放一個陣列。
      * 這樣既有的呼叫端（設定畫面的「約 N 分鐘」）不用改就能繼續用，
      * 要顯示備選的畫面再多讀一個欄位。
+     *
+     * 注意 totalMinutes 的意思變了：現在含依班距估算的等車。
+     * 純車程要看 rideMinutes。
      */
-    return c.json({ ...routes.best, alternatives: routes.alternatives })
+    return c.json({
+      from: best.from,
+      to: best.to,
+      totalMinutes: best.totalMinutes,
+      rideMinutes: best.rideMinutes,
+      waitMinutes: best.waitMinutes,
+      transfers: best.transfers,
+      legs: best.legs,
+      peak: best.peak,
+      service: best.service,
+      alternatives,
+    })
   } catch (error) {
     console.error('[transit/plan]', error)
     return c.json({ error: '路線規劃暫時無法使用' }, 502)

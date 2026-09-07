@@ -10,6 +10,7 @@ import {
   type ResolvedPlace,
   type UserLocation,
 } from '../services/place.ts'
+import { applySchedule, type ScheduledPlan } from '../services/metro-schedule.ts'
 import { planMetroRoutes } from '../services/route-planner.ts'
 import {
   getBusStatus,
@@ -204,6 +205,105 @@ export function createTools(userRef: string, location?: UserLocation | null) {
     return (await here()) ?? null
   }
 
+  /*
+   * 規劃一趟行程。plan_route 與 save_trip 共用 ——
+   * 兩邊各寫一套的話，使用者看到的路線跟存進行程的路線可能不一樣。
+   *
+   * 失敗時回傳 { failure }，那個物件就是要直接回給模型的內容。
+   */
+  type TripPlan = {
+    origin: ResolvedPlace
+    destination: ResolvedPlace
+    originStation: string
+    destinationStation: string
+    /** 走到起站 + 出站走到目的地 */
+    walkMinutes: number
+    /** 已依「還有沒有車」排序，[0] 是建議路線 */
+    scheduled: ScheduledPlan[]
+    closed: boolean
+  }
+
+  const planTrip = async (
+    from: string | undefined,
+    to: string,
+  ): Promise<{ plan: TripPlan } | { failure: Record<string, unknown> }> => {
+    const [origin, destination] = await Promise.all([resolve(from), resolvePlaceName(to)])
+
+    if (!origin) {
+      return {
+        failure: from
+          ? { from, to, error: `查不到「${from}」這個地點` }
+          : needLocation('規劃從你現在的位置出發的路線'),
+      }
+    }
+    if (!destination) {
+      return { failure: { from: origin.label, to, error: `查不到「${to}」這個地點` } }
+    }
+    if (!origin.station || !destination.station) {
+      return {
+        failure: {
+          from: origin.label,
+          to: destination.label,
+          error: '這兩個地點之間沒有可用的捷運站，我沒辦法規劃捷運路線',
+        },
+      }
+    }
+    /* 兩端最近的是同一站，代表捷運幫不上忙 —— 照實說，不要硬排一條路線 */
+    if (origin.station.name === destination.station.name) {
+      return {
+        failure: {
+          from: origin.label,
+          to: destination.label,
+          routes: [],
+          same_station: origin.station.name,
+          straight_line_meters: Math.round(
+            haversineMeters(origin.lat, origin.lon, destination.lat, destination.lon),
+          ),
+          note: '兩地最近的捷運站是同一站，走路或叫車比較合理',
+        },
+      }
+    }
+
+    const routes = await planMetroRoutes(origin.station.name, destination.station.name)
+    if (!routes) {
+      return {
+        failure: {
+          from: origin.label,
+          to: destination.label,
+          error: `查不到「${origin.station.name}」到「${destination.station.name}」的捷運路線`,
+        },
+      }
+    }
+
+    /*
+     * 套上「現在幾點」。
+     *
+     * 在這之前規劃完全沒有時間概念，凌晨兩點問也會回一條「搭板南線
+     * 三分鐘到」的建議 —— 那個時間捷運早就收班了。現在每條路線都會
+     * 帶上真實班距推導的等車時間，以及第一段在此刻還有沒有車。
+     */
+    const now = new Date()
+    const scheduled = await Promise.all(
+      [routes.best, ...routes.alternatives].map((r) => applySchedule(r, now)),
+    )
+
+    /* 還有車的排前面 —— 收班的路線再快也搭不到 */
+    const rank = (status: string) => (status === 'running' ? 0 : status === 'unknown' ? 1 : 2)
+    scheduled.sort((a, b) => rank(a.service.status) - rank(b.service.status))
+
+    return {
+      plan: {
+        origin,
+        destination,
+        originStation: origin.station.name,
+        destinationStation: destination.station.name,
+        walkMinutes: origin.station.walkMinutes + destination.station.walkMinutes,
+        scheduled,
+        closed: scheduled.every((r) => r.service.status === 'closed'),
+      },
+    }
+  }
+
   return {
     ...sharedTools,
 
@@ -271,48 +371,11 @@ export function createTools(userRef: string, location?: UserLocation | null) {
         }
 
         try {
-          const [origin, destination] = await Promise.all([resolve(from), resolvePlaceName(to)])
+          const result = await planTrip(from, to)
+          if ('failure' in result) return result.failure
 
-          if (!origin) {
-            return from
-              ? { from, to, error: `查不到「${from}」這個地點` }
-              : needLocation('規劃從你現在的位置出發的路線')
-          }
-          if (!destination) return { from: origin.label, to, error: `查不到「${to}」這個地點` }
-
-          if (!origin.station || !destination.station) {
-            return {
-              from: origin.label,
-              to: destination.label,
-              error: '這兩個地點之間沒有可用的捷運站，我沒辦法規劃捷運路線',
-            }
-          }
-
-          /* 兩端最近的是同一站，代表捷運幫不上忙 —— 照實說，不要硬排一條路線 */
-          if (origin.station.name === destination.station.name) {
-            return {
-              from: origin.label,
-              to: destination.label,
-              routes: [],
-              same_station: origin.station.name,
-              straight_line_meters: Math.round(
-                haversineMeters(origin.lat, origin.lon, destination.lat, destination.lon),
-              ),
-              note: '兩地最近的捷運站是同一站，走路或叫車比較合理',
-            }
-          }
-
-          const routes = await planMetroRoutes(origin.station.name, destination.station.name)
-          if (!routes) {
-            return {
-              from: origin.label,
-              to: destination.label,
-              error: `查不到「${origin.station.name}」到「${destination.station.name}」的捷運路線`,
-            }
-          }
-
-          const walk = origin.station.walkMinutes + destination.station.walkMinutes
-          const plans = [routes.best, ...routes.alternatives]
+          const { origin, destination, walkMinutes, scheduled, closed } = result.plan
+          const first = scheduled[0]
 
           /*
            * 天氣直接在這裡查，不要指望模型自己再呼叫一次 get_weather。
@@ -335,19 +398,49 @@ export function createTools(userRef: string, location?: UserLocation | null) {
             /* 目的地的天氣會被排成卡片；出發地的留給模型判斷「現在這邊在下雨」 */
             weather: {
               origin: originWeather && weatherPayload(originWeather, origin.label),
-              destination: destinationWeather && weatherPayload(destinationWeather, destination.label),
+              destination:
+                destinationWeather && weatherPayload(destinationWeather, destination.label),
             },
-            /* 建議路線的門到門時間：走到起站 + 車程 + 出站走到目的地 */
-            total_minutes: walk + routes.best.totalMinutes,
+            /* 建議路線的門到門時間：走到起站 + 等車 + 車程 + 出站走到目的地 */
+            total_minutes: walkMinutes + first.totalMinutes,
+            /*
+             * 捷運此刻的營運狀態。closed 時**絕對不要**照著路線講「幾分鐘會到」，
+             * 那班車根本不存在。要照實說已經沒有車，並改建議叫車。
+             */
+            metro_closed: closed,
+            service:
+              first.service.status === 'closed'
+                ? {
+                    status: 'closed',
+                    station: first.service.station,
+                    line: first.service.line,
+                    first_train: first.service.firstTrain,
+                    last_train: first.service.lastTrain,
+                  }
+                : { status: first.service.status },
+            peak: first.peak,
             /* 第一條是建議路線，其餘是使用者可以自己選的替代方案 */
-            routes: plans.map((p) => ({
-              ride_minutes: p.totalMinutes,
-              total_minutes: walk + p.totalMinutes,
-              transfers: p.transfers,
-              legs: p.legs,
+            routes: scheduled.map((r) => ({
+              ride_minutes: r.rideMinutes,
+              /* 依真實班距推導的期望等車（含轉乘等車），不是保證值 */
+              wait_minutes: r.waitMinutes,
+              total_minutes: walkMinutes + r.totalMinutes,
+              transfers: r.transfers,
+              service: r.service.status,
+              legs: r.legs.map((l) => ({
+                line: l.line,
+                from: l.from,
+                to: l.to,
+                stops: l.stops,
+                minutes: l.minutes,
+                wait_minutes: l.waitMinutes,
+              })),
             })),
             note:
-              '時間為估計值，不含等第一班車的時間；兩端步行時間由直線距離估算' +
+              (closed
+                ? '捷運目前不在營運時間內，下面的路線僅供參考，現在搭不到。'
+                : '時間含依班距估算的等車，是期望值不是保證；') +
+              '兩端步行時間由直線距離估算' +
               (origin.metroReachable && destination.metroReachable
                 ? ''
                 : '。其中一端離捷運站較遠，這段路可能適合叫車'),
@@ -355,6 +448,79 @@ export function createTools(userRef: string, location?: UserLocation | null) {
         } catch (error) {
           console.error('[plan_route]', error)
           return { from: from ?? null, to, error: '路線規劃暫時無法使用' }
+        }
+      },
+    }),
+
+    save_trip: tool({
+      description:
+        '把一趟行程加入使用者「今天的行程」。' +
+        '使用者明講「把這條加到行程」「幫我記下來」「加入行程」時才使用。' +
+        '只是問怎麼去、要多久的時候**不要**呼叫 —— 那是在問路，不是要記錄。',
+      inputSchema: z.object({
+        from: z
+          .string()
+          .optional()
+          .describe('出發地。使用者說「從我這裡」或沒講時不要帶，系統會用他的定位。'),
+        to: z.string().describe('目的地'),
+        route_index: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            '要存第幾條路線，1 是建議路線。使用者說「存第二條」時才帶，' +
+              '沒指定就不要帶。',
+          ),
+      }),
+      /*
+       * 為什麼要重新規劃一次而不是叫模型把路線內容傳進來：
+       * 讓模型複述站名、路線名、分鐘數，它就有機會抄錯，而抄錯的結果會被
+       * 直接寫進使用者的行程。重算一次的成本幾乎是零（路網圖與路線都有快取），
+       * 換來的是「存進去的一定是真的算出來的那條」。
+       */
+      execute: async ({ from, to, route_index }) => {
+        if (!hasTdxCredentials()) {
+          return { saved: false, error: 'TDX 金鑰未設定，無法規劃路線' }
+        }
+
+        try {
+          const result = await planTrip(from, to)
+          if ('failure' in result) return { saved: false, ...result.failure }
+
+          const { origin, destination, originStation, destinationStation, walkMinutes, scheduled } =
+            result.plan
+
+          const index = Math.min(Math.max((route_index ?? 1) - 1, 0), scheduled.length - 1)
+          const chosen = scheduled[index]
+
+          /* 現在搭不到的東西放進今天的行程沒有意義 */
+          if (chosen.service.status === 'closed') {
+            return {
+              saved: false,
+              metro_closed: true,
+              error: '這條路線現在不在營運時間內，先不要加進今天的行程',
+              first_train: chosen.service.firstTrain,
+              last_train: chosen.service.lastTrain,
+            }
+          }
+
+          return {
+            saved: true,
+            /* 這個 trip 會被 agent/index.ts 轉成串流事件，前端據此更新行程頁 */
+            trip: {
+              from: origin.label,
+              to: destination.label,
+              from_station: originStation,
+              to_station: destinationStation,
+              lines: chosen.legs.map((l) => l.line),
+              transfers: chosen.transfers,
+              total_minutes: walkMinutes + chosen.totalMinutes,
+            },
+          }
+        } catch (error) {
+          console.error('[save_trip]', error)
+          return { saved: false, error: '加入行程失敗，請稍後再試' }
         }
       },
     }),

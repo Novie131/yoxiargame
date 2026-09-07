@@ -481,6 +481,80 @@ function getStationOfLine() {
 }
 
 /*
+ * 首末班車與班距。
+ *
+ * 這兩份是「現在還有沒有車、要等多久」的唯一依據。沒有它們的話，
+ * 凌晨兩點問路線會得到一條看起來完全正常、但捷運早就收班的建議 ——
+ * 那比回答「不知道」糟得多。
+ *
+ * 兩份都是靜態資料，TTL 一天。但要注意冷啟動的額度：路網圖已經要 4 次，
+ * 加上這兩支就是 6 次，會超過每分鐘 5 次的上限。所以呼叫端**必須**容忍
+ * 這兩支失敗（見 metro-schedule.ts），失敗時退成「不確定」而不是報錯。
+ */
+
+export type MetroFirstLast = {
+  LineID: string
+  StationID: string
+  StationName: { Zh_tw: string }
+  /* TDX 這個欄位名就是拼錯的（Staion），照抄，不要「修正」成 Station */
+  DestinationStaionID: string
+  DestinationStationName: { Zh_tw: string }
+  FirstTrainTime: string
+  LastTrainTime: string
+  ServiceDay: {
+    Monday: boolean
+    Tuesday: boolean
+    Wednesday: boolean
+    Thursday: boolean
+    Friday: boolean
+    Saturday: boolean
+    Sunday: boolean
+    NationalHolidays: boolean
+  }
+}
+
+/** 每站每方向的首末班車時刻。 */
+export function getFirstLastTimetable() {
+  return get<MetroFirstLast[]>(
+    `v2/Rail/Metro/FirstLastTimetable/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+export type MetroFrequency = {
+  LineID: string
+  ServiceDay: {
+    /** 「平日」或「假日」 */
+    ServiceTag?: string
+    Monday: boolean
+    Tuesday: boolean
+    Wednesday: boolean
+    Thursday: boolean
+    Friday: boolean
+    Saturday: boolean
+    Sunday: boolean
+    NationalHolidays: boolean
+  }
+  OperationTime: { StartTime: string; EndTime: string }
+  Headways: Array<{
+    /** "1" = 尖峰 */
+    PeakFlag: string
+    StartTime: string
+    EndTime: string
+    MinHeadwayMins: number
+    MaxHeadwayMins: number
+  }>
+}
+
+/** 各路線分平日／假日、分時段的班距。 */
+export function getFrequency() {
+  return get<MetroFrequency[]>(
+    `v2/Rail/Metro/Frequency/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+/*
  * 站點座標。
  *
  * 用來回答「離這個地點最近的捷運站是哪一個、要走多久」——

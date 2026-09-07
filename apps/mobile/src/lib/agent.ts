@@ -23,13 +23,22 @@ export type ChatMessage = { role: ChatRole; content: string }
  * 「現況 + 未來幾小時 + 好幾則建議」—— 那已經講不完了。
  */
 export type RouteOption = {
-  /** 門到門：走到起站 + 車程 + 出站走到目的地 */
+  /** 門到門：走到起站 + 等車 + 車程 + 出站走到目的地 */
   totalMinutes: number
-  /** 只有車程 */
+  /** 只有車程與轉乘站內步行 */
   rideMinutes: number
+  /** 依真實班距推導的期望等車。班距拿不到時為 0。 */
+  waitMinutes: number
   transfers: number
+  /** 這條路線的第一段此刻還有沒有車 */
+  service: 'running' | 'closed' | 'unknown'
   legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
 }
+
+/** 捷運此刻的營運狀態。形狀必須跟後端的 MetroService 一致。 */
+export type MetroService =
+  | { status: 'running' | 'unknown' }
+  | { status: 'closed'; station: string; line: string; firstTrain: string; lastTrain: string }
 
 export type RoutePlanCard = {
   kind: 'route_plan'
@@ -42,6 +51,9 @@ export type RoutePlanCard = {
   toWalkMinutes: number
   /** [0] 是建議路線，其餘讓使用者自己選 */
   routes: RouteOption[]
+  /** 現在是不是尖峰時段 */
+  peak: boolean
+  service: MetroService
 }
 
 export type WeatherCard = {
@@ -65,6 +77,16 @@ export type WeatherCard = {
 /* 缺位置時後端會送這張，前端渲染成「開啟定位」與「手動選擇」兩個動作 */
 export type LocationRequestCard = {
   kind: 'location_request'
+  message: string
+}
+
+/*
+ * 工具查不到東西時後端會送這張。
+ * 模型在工具失敗時會自己編一段路線出來（實測過），這張卡是讓使用者
+ * 不論模型講什麼都看得到「這次沒查到」。
+ */
+export type NoticeCard = {
+  kind: 'notice'
   message: string
 }
 
@@ -97,10 +119,23 @@ export type AgentCard =
   | MissionsCard
   | TransitStatusCard
   | LocationRequestCard
+  | NoticeCard
+
+/** 模型把一趟行程加進「今天的行程」。形狀必須跟後端的 PlannedTripEvent 一致。 */
+export type PlannedTripEvent = {
+  from: string
+  to: string
+  fromStation: string
+  toStation: string
+  lines: string[]
+  transfers: number
+  totalMinutes: number
+}
 
 export type AgentEvent =
   | { type: 'text'; value: string }
   | { type: 'commute_route'; route: CommuteRoute }
+  | { type: 'planned_trip'; trip: PlannedTripEvent }
   | { type: 'card'; card: AgentCard }
   | { type: 'error'; message: string }
 
@@ -124,6 +159,15 @@ function parseEvent(line: string): AgentEvent | null {
     const route = parseRoute((parsed as { route?: unknown }).route)
     return route ? { type: 'commute_route', route } : null
   }
+  if (type === 'planned_trip') {
+    const trip = (parsed as { trip?: unknown }).trip
+    /* 只驗最低限度的形狀 —— 這是我們自己的後端，欄位由型別保證 */
+    if (typeof trip === 'object' && trip !== null) {
+      const t = trip as PlannedTripEvent
+      if (t.fromStation && t.toStation) return { type: 'planned_trip', trip: t }
+    }
+    return null
+  }
   if (type === 'card') {
     const card = (parsed as { card?: unknown }).card
     /*
@@ -137,7 +181,8 @@ function parseEvent(line: string): AgentEvent | null {
         kind === 'weather' ||
         kind === 'missions' ||
         kind === 'transit_status' ||
-        kind === 'location_request'
+        kind === 'location_request' ||
+        kind === 'notice'
       ) {
         return { type: 'card', card: card as AgentCard }
       }

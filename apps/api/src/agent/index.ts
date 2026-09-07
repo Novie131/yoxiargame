@@ -33,6 +33,9 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 
 行為規則：
 - 需要即時資訊（天氣、路況、車資、活動）時務必呼叫工具，不要憑空編造數字。
+- 工具回傳 error 時，你**只能**說查不到或暫時無法使用。絕對不可以描述任何
+  路線、站名、轉乘次數或時間 —— 你沒有那些資料，講出來的都是編的。
+  這一條沒有例外，包括「聽起來很合理」的推測。
 - 拿到工具結果後，用自然的口語轉述，不要直接貼 JSON。
 - plan_route 的結果已經包含起訖點的天氣（weather 欄位），畫面也會排成天氣卡。
   規劃路線時**不要**再呼叫 get_weather。get_weather 只用在使用者單獨問天氣時。
@@ -41,6 +44,15 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 - plan_route 會回傳多條路線，第一條是建議路線。其餘的不要逐條念出來 ——
   卡片上使用者自己選得到。只有在某條備選明顯有別的好處（少轉一次車）時，
   才用一句話點出來。
+- plan_route 回傳 metro_closed 為 true 時，代表**現在捷運沒有營運**。這時
+  絕對不要照著路線講「幾分鐘會到」，那班車不存在。要照實說已經沒有車、
+  首班車幾點，並改建議叫車。
+- 只有使用者**明講**要記錄（「加到行程」「幫我記下來」）時才呼叫 save_trip。
+  他只是問「怎麼去」「要多久」時不要呼叫 —— 那是在問路，不是要你替他決定
+  今天要去哪。路線卡上本來就有「加入今天行程」的按鈕，他想加會自己按。
+  存好之後用一句話確認就好，不要複述路線內容。
+- 時間裡的等車是依班距推估的期望值。不要講成「你會等 N 分鐘」，
+  講「大概要等」。也不要自己編尖峰離峰 —— 工具會回 peak，以它為準。
 - 主動提供有幫助的建議，例如下雨時建議改搭計程車、紫外線高時提醒防曬。
 - 若使用者的需求需要叫車，說明預估時間與車資後再詢問是否要叫車。
 - 使用者描述自己的日常通勤（例如「我每天從板橋搭捷運到市政府上班」）時，
@@ -163,13 +175,22 @@ export type CommuteRouteEvent = {
 }
 
 export type RouteOption = {
-  /** 門到門：走到起站 + 車程 + 出站走到目的地 */
+  /** 門到門：走到起站 + 等車 + 車程 + 出站走到目的地 */
   totalMinutes: number
-  /** 只有車程 */
+  /** 只有車程與轉乘站內步行 */
   rideMinutes: number
+  /** 依真實班距推導的期望等車（含轉乘等車）。班距拿不到時為 0。 */
+  waitMinutes: number
   transfers: number
+  /** 這條路線的第一段此刻還有沒有車 */
+  service: 'running' | 'closed' | 'unknown'
   legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
 }
+
+/** 捷運此刻的營運狀態。closed 時卡片要明說現在搭不到。 */
+export type MetroService =
+  | { status: 'running' | 'unknown' }
+  | { status: 'closed'; station: string; line: string; firstTrain: string; lastTrain: string }
 
 /*
  * 對話裡的動作卡片。
@@ -195,6 +216,9 @@ export type AgentCard =
       toWalkMinutes: number
       /** [0] 是建議路線，其餘是使用者可以自己選的 */
       routes: RouteOption[]
+      /** 現在是不是尖峰時段（依第一段所在路線的班距表） */
+      peak: boolean
+      service: MetroService
     }
   | {
       kind: 'weather'
@@ -239,10 +263,37 @@ export type AgentCard =
    * 使用者按一下就好，比要他自己去系統設定裡找快得多。
    */
   | { kind: 'location_request'; message: string }
+  /*
+   * 工具查不到東西時送出。
+   *
+   * 存在的理由是實測到的一次失敗：TDX 額度用完，plan_route 回了 error，
+   * 模型卻照樣講「另一條需換一次車的路線比較不擁擠」—— 那段路根本是直達、
+   * 沒有備選，整句話是編的。系統提示早就禁止編造，但提示詞擋不住這種事。
+   *
+   * 所以把真相放進畫面：不管模型講什麼，使用者都看得到「這次沒查到」。
+   */
+  | { kind: 'notice'; message: string }
+
+/*
+ * 使用者明講「把這條加到行程」時，模型呼叫 save_trip，結果由這個事件送到前端。
+ *
+ * 跟 commute_route 同一個道理：這是**狀態改變**不是資訊，畫面要立刻反映，
+ * 不然使用者講完話，行程頁看起來像什麼都沒發生。
+ */
+export type PlannedTripEvent = {
+  from: string
+  to: string
+  fromStation: string
+  toStation: string
+  lines: string[]
+  transfers: number
+  totalMinutes: number
+}
 
 export type AgentEvent =
   | { type: 'text'; value: string }
   | { type: 'commute_route'; route: CommuteRouteEvent }
+  | { type: 'planned_trip'; trip: PlannedTripEvent }
   | { type: 'card'; card: AgentCard }
 
 /* save_commute_route 的回傳值 → 事件。形狀不對就當作沒發生，不要讓串流掛掉。 */
@@ -271,6 +322,37 @@ function toCommuteRouteEvent(output: unknown): CommuteRouteEvent | null {
       : [],
     usualTimeStart: text(r.usual_time_start),
     usualTimeEnd: text(r.usual_time_end),
+  }
+}
+
+/* save_trip 的回傳值 → 事件。形狀不對就當作沒發生，不要讓串流掛掉。 */
+function toPlannedTripEvent(output: unknown): PlannedTripEvent | null {
+  if (typeof output !== 'object' || output === null) return null
+  const o = output as Record<string, unknown>
+  if (o.saved !== true) return null
+
+  const trip = o.trip
+  if (typeof trip !== 'object' || trip === null) return null
+  const t = trip as Record<string, unknown>
+
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
+  const from = text(t.from)
+  const to = text(t.to)
+  const fromStation = text(t.from_station)
+  const toStation = text(t.to_station)
+  const totalMinutes = typeof t.total_minutes === 'number' ? t.total_minutes : null
+  if (!from || !to || !fromStation || !toStation || totalMinutes === null) return null
+
+  return {
+    from,
+    to,
+    fromStation,
+    toStation,
+    lines: Array.isArray(t.lines)
+      ? t.lines.filter((l): l is string => typeof l === 'string')
+      : [],
+    transfers: typeof t.transfers === 'number' ? t.transfers : 0,
+    totalMinutes,
   }
 }
 
@@ -321,10 +403,31 @@ function toRoutePlanCard(output: unknown): AgentCard | null {
     if (rideMinutes === null || totalMinutes === null) return []
     const legs = toLegs(r.legs)
     if (legs.length === 0) return []
-    return [{ totalMinutes, rideMinutes, transfers: asNumber(r.transfers) ?? 0, legs }]
+    return [
+      {
+        totalMinutes,
+        rideMinutes,
+        waitMinutes: asNumber(r.wait_minutes) ?? 0,
+        transfers: asNumber(r.transfers) ?? 0,
+        service: r.service === 'running' || r.service === 'closed' ? r.service : 'unknown',
+        legs,
+      },
+    ]
   })
   /* 一條都排不出來時（起訖同站）不要給空卡片，讓模型用文字說明 */
   if (routes.length === 0) return null
+
+  const svc = asRecord(o.service)
+  const service: MetroService =
+    svc?.status === 'closed'
+      ? {
+          status: 'closed',
+          station: asString(svc.station) ?? '',
+          line: asString(svc.line) ?? '',
+          firstTrain: asString(svc.first_train) ?? '',
+          lastTrain: asString(svc.last_train) ?? '',
+        }
+      : { status: svc?.status === 'running' ? 'running' : 'unknown' }
 
   return {
     kind: 'route_plan',
@@ -335,6 +438,8 @@ function toRoutePlanCard(output: unknown): AgentCard | null {
     fromWalkMinutes: asNumber(from.walk_minutes_to_station) ?? 0,
     toWalkMinutes: asNumber(to.walk_minutes_to_station) ?? 0,
     routes,
+    peak: o.peak === true,
+    service,
   }
 }
 
@@ -459,6 +564,15 @@ function toCards(toolName: string, output: unknown): AgentCard[] {
   const only = (card: AgentCard | null) => (card ? [card] : [])
 
   if (toolName === 'plan_route') {
+    /*
+     * 查不到就明說。這一步不能省：模型在工具失敗時會自己補一段聽起來
+     * 很合理的路線，而使用者沒有任何線索知道那是編的。
+     *
+     * same_station 那種情況有自己的 note，不算失敗，所以只看 error。
+     */
+    const failure = asString(o?.error)
+    if (failure) return [{ kind: 'notice', message: failure }]
+
     const cards = only(toRoutePlanCard(output))
     /* 路線排不出來時就別給天氣卡了 —— 單獨一張天氣卡答非所問 */
     if (cards.length === 0) return cards
@@ -530,6 +644,10 @@ export async function* streamAgentReplyWithFallback(
           if (part.toolName === 'save_commute_route') {
             const route = toCommuteRouteEvent(part.output)
             if (route) yield { type: 'commute_route', route }
+          }
+          if (part.toolName === 'save_trip') {
+            const trip = toPlannedTripEvent(part.output)
+            if (trip) yield { type: 'planned_trip', trip }
           }
 
           for (const card of toCards(part.toolName, part.output)) {

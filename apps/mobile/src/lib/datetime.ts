@@ -16,3 +16,20 @@ export function greeting(date: Date = new Date()): string {
   if (hour < 18) return '午安'
   return '晚安'
 }
+
+/*
+ * 現在起 N 分鐘後是幾點。
+ *
+ * 明確指定臺北時區而不是用裝置的本地時間：這個時間指的是「捷運幾點到站」，
+ * 那是臺北的時間。使用者人在國外規劃臺北的行程時，本地時間會是錯的。
+ * （greeting() 用本地時間是對的 —— 「早安」該對應他所在地的早上。）
+ */
+export function timeAfterMinutes(minutes: number, from: Date = new Date()): string {
+  const at = new Date(from.getTime() + minutes * 60_000)
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Taipei',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(at)
+}
