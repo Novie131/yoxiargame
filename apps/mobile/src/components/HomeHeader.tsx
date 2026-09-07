@@ -78,9 +78,13 @@ export function HomeHeader({
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning-tint">
               <SunIcon />
             </span>
+            {/*
+              * 內文允許折兩行。單行截斷會把「建議帶傘」這種**行動**切掉，
+              * 只留下「約 11:00 起降雨機率 88%…」—— 資訊留著、要做什麼卻不見了。
+              */}
             <div className="min-w-0 leading-tight">
               <p className="truncate text-[13px] font-semibold">{card.title}</p>
-              <p className="truncate text-[11px] text-subtle">{card.body}</p>
+              <p className="line-clamp-2 text-[11px] text-subtle">{card.body}</p>
             </div>
           </div>
         )}

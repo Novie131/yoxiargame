@@ -32,7 +32,14 @@ export type WeatherOutlook = {
   maxTemperatureC: number
   /** 這段時間內最高的降雨機率（%） */
   maxPrecipitationProbability: number
-  /** 降雨機率首次超過門檻的時刻（HH:MM，當地時間）。整段都不會下就是 null。 */
+  /*
+   * 降雨機率首次超過門檻的時刻（HH:MM，當地時間）。
+   *
+   * **現在這個小時就已經超過門檻時是 null** —— 那不是「等一下開始」，是現在就在下。
+   * 沒有這個區分的話，11:52 查到的卡片會寫「約 11:00 起降雨」，
+   * 那個時間已經過去了，看起來像壞掉（踩過）。
+   * 判斷方式：maxPrecipitationProbability 過門檻但這裡是 null，就代表是現在。
+   */
   rainStartsAt: string | null
   maxUvIndex: number
 }
@@ -196,13 +203,25 @@ function buildAdvices(
       body: '出門記得帶傘，或改搭捷運與計程車',
     })
   } else if (outlook && outlook.maxPrecipitationProbability >= RAIN_PROBABILITY_THRESHOLD) {
-    /* 機率與時間都講出來，使用者才有辦法自己判斷要不要帶 */
-    const when = outlook.rainStartsAt ? `約 ${outlook.rainStartsAt} 起` : `未來 ${outlook.hours} 小時內`
-    advices.push({
-      kind: 'umbrella',
-      title: '等一下可能下雨',
-      body: `${when}降雨機率 ${outlook.maxPrecipitationProbability}%，建議帶傘`,
-    })
+    /*
+     * 機率與時間都講出來，使用者才有辦法自己判斷要不要帶。
+     *
+     * rainStartsAt 為 null 代表現在這個小時就已經過門檻了（見 WeatherOutlook 的註解），
+     * 那時候講「等一下」是錯的 —— 標題與內文都要換成「現在」的說法。
+     */
+    advices.push(
+      outlook.rainStartsAt
+        ? {
+            kind: 'umbrella',
+            title: '等一下可能下雨',
+            body: `約 ${outlook.rainStartsAt} 起降雨機率 ${outlook.maxPrecipitationProbability}%，建議帶傘`,
+          }
+        : {
+            kind: 'umbrella',
+            title: '可能會下雨',
+            body: `未來 ${outlook.hours} 小時降雨機率 ${outlook.maxPrecipitationProbability}%，建議帶傘`,
+          },
+    )
   }
 
   if (current.temperatureC >= 32) {
@@ -301,7 +320,11 @@ function summarize(current: OpenMeteoCurrent, hourly: OpenMeteoHourly | null): W
     const probability = hourly.precipitation_probability?.[i]
     if (typeof probability === 'number') {
       if (probability > maxProbability) maxProbability = probability
-      if (rainStartsAt === null && probability >= RAIN_PROBABILITY_THRESHOLD) {
+      /*
+       * i > start 才算「等一下開始下」。i === start 是現在這個小時，
+       * 報出來會變成一個已經過去的時間。
+       */
+      if (rainStartsAt === null && i > start && probability >= RAIN_PROBABILITY_THRESHOLD) {
         /* 「2026-09-07T15:00」→「15:00」 */
         rainStartsAt = hourly.time[i].slice(11, 16)
       }
