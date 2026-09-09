@@ -135,7 +135,7 @@ export function Map({
 
     void (async () => {
       try {
-        const [{ Map: MapLibreMap, NavigationControl, GeolocateControl, FullscreenControl, setWorkerUrl }] =
+        const [{ Map: MapLibreMap, AttributionControl, NavigationControl, GeolocateControl, FullscreenControl, setWorkerUrl }] =
           await Promise.all([
             import('maplibre-gl'),
             import('maplibre-gl/dist/maplibre-gl.css'),
@@ -160,8 +160,46 @@ export function Map({
            * 完全不值得。頁面捲動改用下面的做法解決：地圖以外的地方都能捲，
            * 想要更大的操作空間就按全螢幕。
            */
-          attributionControl: { compact: true },
+
+          /*
+           * 預設的版權標示關掉，下面自己加一個放到左下角 ——
+           * 它預設在右下角，而叫車那三頁的右下角是「回到目前位置」的準心鈕，
+           * 收合後的 ⓘ 會正好壓在它上面。左下角三個畫面都是空的。
+           */
+          attributionControl: false,
         })
+
+        map.addControl(new AttributionControl({ compact: true }), 'bottom-left')
+
+        /*
+         * 版權標示一開始就是收合的 ⓘ 鈕。
+         *
+         * compact: true 只是「可以收合」，不是「收合著」。MapLibre 在版權文字
+         * 到齊的那一刻會掛上 maplibregl-compact 與 maplibregl-compact-show，
+         * 也就是展開的狀態，要等使用者拖曳地圖或自己按 ⓘ 才收起來。手機寬度下
+         * 那串「OpenFreeMap © OpenMapTiles Data from OpenStreetMap」會斷成兩行，
+         * 變成壓在地圖底部的一整條白色橫幅，比地圖本身還搶眼。
+         *
+         * 這裡是直接把狀態設成「收合」，而不是等它展開後再收回去。
+         * 後者試過，會壞：版權文字是跟著 style 進來的，冷啟動時大約要兩三秒，
+         * 那時 map 的 load 與 idle 早就發過了，收合的動作撲空 ——
+         * 快取熱的時候看起來正常，第一次開的人才會看到那條白線，最難查的那種。
+         *
+         * MapLibre 的兩個狀態長這樣（讀 AttributionControl._toggleAttribution）：
+         *   收合 = maplibregl-compact ＋ 有 open 屬性
+         *   展開 = maplibregl-compact ＋ maplibregl-compact-show ＋ 沒有 open
+         * open 的用法跟直覺相反，別照 <details> 的語意去推。
+         *
+         * 先設成收合還有一個好處：MapLibre 之後要展開時，它的判斷是
+         * 「還沒有 maplibregl-compact 才加上 compact 與 compact-show」，
+         * 我們已經加了，所以它不會再把 -show 補上去，不用跟它搶。
+         *
+         * 內容本身沒有拿掉，按 ⓘ 就展開 ——
+         * 那是 OpenStreetMap／OpenFreeMap 的姓名標示要求，不能整個關掉。
+         */
+        const attrib = map.getContainer().querySelector('.maplibregl-ctrl-attrib')
+        attrib?.classList.add('maplibregl-compact')
+        attrib?.setAttribute('open', '')
 
         if (controlsRef.current) {
           map.addControl(new NavigationControl({ showCompass: false }), 'top-right')

@@ -53,6 +53,24 @@ body,
   height: 100%;
 }
 
+/*
+ * 手機瀏覽器的網址列會隨著捲動收合，視窗高度是會變的。
+ *
+ * height: 100% 對到的是「網址列收合後」的大視窗，所以網址列還在的時候
+ * 版面其實比看得到的範圍高 —— 最下面的 tab bar 會被網址列蓋住一截。
+ * dvh 是會跟著變動的那個單位，正好對應當下看得到的高度。
+ *
+ * 留著上面的 100% 當退路：不支援 dvh 的舊瀏覽器會忽略整個 @supports 區塊，
+ * 拿到的仍是原本的行為，不會變成沒有高度。
+ */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   margin: 0;
   background: var(--color-surface-2);
@@ -61,6 +79,32 @@ body {
     "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
+  /*
+   * 橫向時 Safari 會自作主張把內文放大（text inflation），
+   * 那會讓照設計稿排好的版面在轉橫的瞬間跑掉。
+   */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/*
+ * 表單元件的預設字級 16px。
+ *
+ * iOS Safari 只要輸入框的字級小於 16px，點進去就會自動把整頁放大，
+ * 而且不會自己縮回來 —— 使用者填完一個欄位後畫面就歪掉了。
+ * 這是 index.html 裡把 user-scalable=no 拿掉的前提：
+ * 那個屬性原本是用來壓制這個行為的，但它連帶擋掉了正常的雙指縮放。
+ *
+ * 放在 base layer，讓 Tailwind 的 text-[…] 仍然蓋得過它 ——
+ * 這是「沒特別指定時的安全預設」，不是不能違反的規則。
+ * 現有的幾個輸入框都已經明確寫上 text-[16px]，這條是給之後新增的用的。
+ */
+@layer base {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
 }
 
 /* 原生殼裡不要讓內容被瀏海 / home indicator 蓋掉 */
@@ -69,6 +113,14 @@ body {
 }
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+/*
+ * 橫向時瀏海與圓角是在左右兩側，不是上下。
+ * 只補 top / bottom 的話，轉橫之後內容會被切掉一條。
+ */
+.safe-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /*

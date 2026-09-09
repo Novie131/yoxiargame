@@ -72,7 +72,7 @@ export function ChatComposer({
             }}
             readOnly={readOnly || speech.listening}
             disabled={disabled}
-            className="h-11 w-full rounded-full bg-surface-3 px-4 text-[15px] outline-none placeholder:text-subtle disabled:opacity-60"
+            className="h-11 w-full rounded-full bg-surface-3 px-4 text-[16px] outline-none placeholder:text-subtle disabled:opacity-60"
             placeholder={
               disabled ? '回覆中...' : speech.listening ? '聆聽中，請說話…' : placeholder
             }

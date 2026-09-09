@@ -110,7 +110,7 @@ function StationField({
         /* 延後關閉，否則點建議項時清單已經先消失了 */
         onBlur={() => setTimeout(() => setFocused(false), 120)}
         placeholder={placeholder}
-        className="mt-1 h-11 w-full rounded-xl bg-surface-3 px-3.5 text-[15px] outline-none placeholder:text-subtle focus:ring-2 focus:ring-primary/40"
+        className="mt-1 h-11 w-full rounded-xl bg-surface-3 px-3.5 text-[16px] outline-none placeholder:text-subtle focus:ring-2 focus:ring-primary/40"
       />
 
       {open && (
@@ -305,21 +305,33 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         </label>
 
         {limitTime && (
-          <div className="mt-2 flex items-center gap-2">
+          /*
+           * 兩個 time input 並排放不下時改成上下排。
+           *
+           * 一個 time input 要 142px 才顯示得完「上午 07:30」加時鐘圖示
+           * （量出來的值，字級 16px）。兩個加上中間的「至」與卡片內距，
+           * 螢幕要 390px 以上才夠 —— iPhone SE 是 375px、mini 是 360px，
+           * 都不夠。硬擠的話分鐘會被切掉，變成只看得到「上午 07」。
+           *
+           * min-w-0 是配套：flex item 的 min-width 預設是 auto（不能縮得比內容窄），
+           * 少了它，並排時不是被切掉而是直接撐破卡片跑出畫面。
+           * flex-1 只讓它「可以長大」，沒有讓它「可以縮小」。
+           */
+          <div className="mt-2 flex items-center gap-2 max-[389px]:flex-col max-[389px]:items-stretch">
             <input
               type="time"
               value={timeStart}
               onChange={(e) => setTimeStart(e.target.value)}
               aria-label="通知開始時間"
-              className="h-11 flex-1 rounded-xl bg-surface-3 px-3 text-[15px] outline-none"
+              className="h-11 min-w-0 flex-1 rounded-xl bg-surface-3 px-3 text-[16px] outline-none"
             />
-            <span className="text-[13px] text-subtle">至</span>
+            <span className="text-[13px] text-subtle max-[389px]:text-center">至</span>
             <input
               type="time"
               value={timeEnd}
               onChange={(e) => setTimeEnd(e.target.value)}
               aria-label="通知結束時間"
-              className="h-11 flex-1 rounded-xl bg-surface-3 px-3 text-[15px] outline-none"
+              className="h-11 min-w-0 flex-1 rounded-xl bg-surface-3 px-3 text-[16px] outline-none"
             />
           </div>
         )}

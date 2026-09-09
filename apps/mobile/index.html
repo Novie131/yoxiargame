@@ -2,8 +2,21 @@
 <html lang="zh-Hant-TW">
   <head>
     <meta charset="UTF-8" />
-    
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+
+    <!--
+      viewport-fit=cover 是為了讓內容能鋪到瀏海與 home indicator 底下，
+      再用 CSS 的 env(safe-area-inset-*) 把該讓開的地方讓開（見 index.css）。
+
+      這裡原本還有 maximum-scale=1.0, user-scalable=no。拿掉了：
+      那會擋掉雙指縮放，對看不清楚小字的人來說是直接把內容鎖死，
+      違反 WCAG 1.4.4。而且 iOS Safari 從 10 之後就忽略這兩個值，
+      實際上只有 Android 被擋到 —— 代價全付了，好處只拿到一半。
+
+      當初會加通常是為了防 iOS 在點進輸入框時自動放大。那個行為的真正條件
+      是輸入框字級小於 16px，所以改成把表單元件的字級都設成 16px（見 index.css），
+      從根本解決，不用犧牲縮放。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>yoxi</title>
 
     <!-- PWA：讓使用者可以「加入主畫面」，開起來沒有網址列、全螢幕，像原生 App -->

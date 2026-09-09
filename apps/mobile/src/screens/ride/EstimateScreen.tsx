@@ -82,7 +82,7 @@ export function EstimateScreen() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-3 gap-2.5">
+        <div className="mt-3 grid grid-cols-3 gap-2.5 max-[359px]:gap-1.5">
           {stats.map(({ label, value, highlight }) => (
             <div
               key={label}
@@ -96,7 +96,7 @@ export function EstimateScreen() {
               <p className="text-[11px] text-subtle">{label}</p>
               <p
                 className={[
-                  'mt-0.5 text-[15px] font-bold',
+                  'mt-0.5 text-[15px] font-bold max-[359px]:text-[13px]',
                   highlight ? 'text-primary' : '',
                 ].join(' ')}
               >
@@ -106,7 +106,7 @@ export function EstimateScreen() {
           ))}
         </div>
 
-        <div className="mt-3 grid grid-cols-3 gap-2.5">
+        <div className="mt-3 grid grid-cols-3 gap-2.5 max-[359px]:gap-1.5">
           {carTypes.map(({ id, name, note }) => {
             const on = selected === id
             return (
@@ -117,6 +117,7 @@ export function EstimateScreen() {
                 aria-pressed={on}
                 className={[
                   'flex items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors',
+                  'max-[359px]:gap-1.5 max-[359px]:px-2',
                   on ? 'bg-ink text-white' : 'border border-line/60',
                 ].join(' ')}
               >

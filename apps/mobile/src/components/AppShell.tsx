@@ -23,7 +23,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div
       className={[
         'mx-auto flex h-full w-full max-w-[430px] flex-col bg-surface shadow-[0_0_40px_rgba(0,0,0,.08)]',
-        native ? 'safe-top' : '',
+        /*
+         * safe-x 是給橫向用的 —— 轉橫之後瀏海與圓角在左右兩側，
+         * 只補 safe-top 的話內容會被切掉一條。
+         */
+        native ? 'safe-top safe-x' : '',
       ].join(' ')}
     >
       <StatusBar />
