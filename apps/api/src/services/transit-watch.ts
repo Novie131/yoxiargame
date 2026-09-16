@@ -262,7 +262,7 @@ function merge(a: PollResult, b: PollResult): PollResult {
 }
 
 export async function pollTransit(at: Date = new Date()): Promise<PollResult> {
-  if (!hasDatabase()) return { ok: false, reason: '未設定 DATABASE_URL', ...EMPTY }
+  if (!hasDatabase()) return { ok: false, reason: '沒有資料庫連線', ...EMPTY }
   if (!hasTdxCredentials()) return { ok: false, reason: '未設定 TDX 金鑰', ...EMPTY }
 
   let result: PollResult = { ok: true, ...EMPTY }

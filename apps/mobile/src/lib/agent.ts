@@ -113,11 +113,35 @@ export type TransitStatusCard = {
   incidents: Array<{ title: string; description: string }>
 }
 
+/*
+ * 叫車估價。形狀必須跟後端 agent/index.ts 的 ride_estimate 卡一致。
+ *
+ * 這張卡存在的理由是模型會把 basis 那句「非 yoxi 實際報價」講掉，
+ * 只留下看起來很篤定的車資 —— 跟 NoticeCard 同一個模式：
+ * 把真相放進畫面，不要依賴模型自律。
+ */
+export type RideEstimateCard = {
+  kind: 'ride_estimate'
+  from: string
+  to: string
+  /** 給「直接叫車」按鈕用。0 代表後端沒給座標，那就不要顯示按鈕。 */
+  toLat: number
+  toLon: number
+  distanceKm: number
+  durationMinutes: number
+  eta: string
+  fare: { min: number; max: number }
+  traffic: 'peak' | 'offPeak' | 'night'
+  nightSurcharge: boolean
+  basis: string
+}
+
 export type AgentCard =
   | RoutePlanCard
   | WeatherCard
   | MissionsCard
   | TransitStatusCard
+  | RideEstimateCard
   | LocationRequestCard
   | NoticeCard
 

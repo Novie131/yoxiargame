@@ -19,14 +19,15 @@ import {
   haversineMeters,
   isBusCity,
 } from '../services/tdx.ts'
+import { estimateRide } from '../services/ride.ts'
 import { getWeather, type Weather } from '../services/weather.ts'
 
 /*
  * Agent 可用的工具。
  *
- * 通勤路線、天氣、路徑規劃、捷運與公車即時狀態都已接上真實來源；
- * estimate_ride 仍回假資料，數值刻意對齊 Document/ 的設計稿，
- * 之後接真實來源時只要換掉 execute 的內容。
+ * 通勤路線、天氣、路徑規劃、捷運與公車即時狀態都已接上真實來源。
+ * estimate_ride 算的是「依臺北市公告費率跑這段距離要多少錢」，不是 yoxi 的報價
+ * （見 services/ride.ts）—— 接上 yoxi 之後換掉那個檔案，這裡不用動。
  *
  * 工具分兩類：
  *   sharedTools  跟使用者與位置都無關，模組層定義一次即可
@@ -157,28 +158,6 @@ const sharedTools = {
         return { line, mode, error: '捷運即時服務暫時無法取得' }
       }
     },
-  }),
-
-  estimate_ride: tool({
-    description: '估算兩地之間的計程車車程時間與車資區間。使用者想叫車或比較交通方式時使用。',
-    inputSchema: z.object({
-      from: z.string().describe('上車地點'),
-      to: z.string().describe('下車地點'),
-    }),
-    /*
-     * 假資料，數值對齊 Document/yoxi-ride-estimate.png。
-     * 注意這跟 trip-options.ts「沒有來源就不給數字」的立場是矛盾的 ——
-     * 接上 yoxi 的估價 API 之前，這裡回的車資與時間都不能當真。
-     */
-    execute: async ({ from, to }) => ({
-      from,
-      to,
-      distance_km: 8.5,
-      duration_minutes: 15,
-      fare_twd: { min: 250, max: 320 },
-      eta: '14:25',
-      data_source: 'mock',
-    }),
   }),
 }
 
@@ -340,6 +319,57 @@ export function createTools(userRef: string, location?: UserLocation | null) {
         } catch (error) {
           console.error('[get_weather]', error)
           return { place: place ?? null, error: '天氣服務暫時無法取得' }
+        }
+      },
+    }),
+
+    estimate_ride: tool({
+      description:
+        '估算叫車（計程車）的車程時間與車資區間。使用者想叫車、問車資、' +
+        '或要把叫車跟捷運比較時使用。',
+      inputSchema: z.object({
+        from: z
+          .string()
+          .optional()
+          .describe('上車地點。使用者說「從這裡」或沒講時**不要帶**，系統會用他的定位。'),
+        to: z.string().describe('下車地點，例如「臺北101」「松山機場」'),
+      }),
+      /*
+       * 數字全部推得出來：距離來自兩端座標，車資來自公告費率。
+       * basis 要原封不動傳給模型 —— 那句「非 yoxi 實際報價」是這個工具
+       * 唯一誠實的地方，被省掉就又變成一個看起來很篤定的假數字。
+       */
+      execute: async ({ from, to }) => {
+        try {
+          const [origin, destination] = await Promise.all([resolve(from), resolvePlaceName(to)])
+
+          if (!origin) {
+            return from
+              ? { from, to, error: `查不到「${from}」這個地點` }
+              : needLocation('估算車資')
+          }
+          if (!destination) return { from: origin.label, to, error: `查不到「${to}」這個地點` }
+
+          const estimate = estimateRide(origin, destination)
+
+          return {
+            from: origin.label,
+            to: destination.label,
+            /* 座標給估價卡的「直接叫車」按鈕用，模型不需要理解它們 */
+            to_lat: destination.lat,
+            to_lon: destination.lon,
+            distance_km: estimate.distanceKm,
+            duration_minutes: estimate.durationMinutes,
+            fare_twd: estimate.fare,
+            eta: estimate.eta,
+            traffic: estimate.traffic,
+            night_surcharge: estimate.nightSurcharge,
+            data_source: 'taipei-taxi-tariff',
+            basis: estimate.basis,
+          }
+        } catch (error) {
+          console.error('[estimate_ride]', error)
+          return { from: from ?? null, to, error: '車資估算暫時無法取得' }
         }
       },
     }),

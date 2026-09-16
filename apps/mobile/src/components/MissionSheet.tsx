@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 
 import { CarIcon, MapPinIcon } from './icons'
 import { missionRelativeTo, type Mission } from '@/lib/missions'
+import { formatFare } from '@/lib/ride'
 import { useTripOptions, type TripOption } from '@/lib/tripOptions'
 
 /*
@@ -10,7 +11,8 @@ import { useTripOptions, type TripOption } from '@/lib/tripOptions'
  * 設計上的重點是**不預設推叫車**。三百公尺的任務跳出「叫車前往」，
  * 使用者只會學到這個 App 在推銷，然後不再相信它給的任何建議。
  * 所以選項一律照後端算出來的實際時間排序，畫面不重排 ——
- * 走路比較快就走路排前面，叫車因為沒有時間依據固定在最後。
+ * 走路比較快就走路排前面。叫車現在有估計時間了，短程時它可能排第一，
+ * 那是排序的結果不是推銷。
  *
  * 沿用叫車流程那套底部面板的視覺（圓角、把手、陰影），只是這裡是彈出式的。
  */
@@ -32,8 +34,14 @@ function optionLabel(o: TripOption): { title: string; detail: string } {
         `・出站走 ${o.toStation.walkMinutes} 分`,
     }
   }
-  /* 叫車沒有時間也沒有車資 —— 沒有資料來源就不要編一個 */
-  return { title: '叫車前往', detail: '車程與車資待接上叫車服務後顯示' }
+  /*
+   * 車資是依公告費率估算的，不是 yoxi 報價 —— detail 要把這件事講出來，
+   * 不然使用者會以為這是已經談好的價錢。
+   */
+  return {
+    title: `叫車 約 ${o.estimate.durationMinutes} 分鐘`,
+    detail: `${formatFare(o.estimate.fare)}・${o.estimate.distanceKm} 公里・依公告費率估算`,
+  }
 }
 
 export function MissionSheet({

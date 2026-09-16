@@ -250,6 +250,31 @@ export type AgentCard =
         lon: number
       }>
     }
+  /*
+   * 叫車估價。
+   *
+   * 為什麼一定要有這張卡：實測模型會把車資與時間講出來，但**把 basis 那句
+   * 「非 yoxi 實際報價」吞掉**。跟 plan_route 的 notice 卡同一個道理 ——
+   * 提示詞擋不住模型省略，所以把真相放進畫面。
+   *
+   * 順帶把對話接回叫車流程：卡片上的按鈕帶著座標進 /ride/estimate，
+   * 使用者不用再打一次地名。
+   */
+  | {
+      kind: 'ride_estimate'
+      from: string
+      to: string
+      toLat: number
+      toLon: number
+      distanceKm: number
+      durationMinutes: number
+      eta: string
+      fare: { min: number; max: number }
+      traffic: 'peak' | 'offPeak' | 'night'
+      nightSurcharge: boolean
+      /** 數字怎麼來的。前端必須顯示。 */
+      basis: string
+    }
   | {
       kind: 'transit_status'
       line: string
@@ -516,6 +541,43 @@ function toMissionsCard(output: unknown): AgentCard | null {
   return { kind: 'missions', area: asString(o.area) ?? '', missions }
 }
 
+function toRideEstimateCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error) return null
+
+  const from = asString(o.from)
+  const to = asString(o.to)
+  const distanceKm = asNumber(o.distance_km)
+  const durationMinutes = asNumber(o.duration_minutes)
+  const basis = asString(o.basis)
+  const fare = asRecord(o.fare_twd)
+  const min = fare && asNumber(fare.min)
+  const max = fare && asNumber(fare.max)
+
+  /* 少任何一項就不發卡 —— 半張估價卡比沒有卡更容易被誤讀 */
+  if (!from || !to || distanceKm === null || durationMinutes === null) return null
+  if (!basis || min === null || min === undefined || max === null || max === undefined) return null
+
+  const traffic =
+    o.traffic === 'peak' ? 'peak' : o.traffic === 'night' ? 'night' : 'offPeak'
+
+  return {
+    kind: 'ride_estimate',
+    from,
+    to,
+    /* 座標是給「直接叫車」按鈕用的，沒有就讓前端只顯示數字不給按鈕 */
+    toLat: asNumber(o.to_lat) ?? 0,
+    toLon: asNumber(o.to_lon) ?? 0,
+    distanceKm,
+    durationMinutes,
+    eta: asString(o.eta) ?? '',
+    fare: { min, max },
+    traffic,
+    nightSurcharge: o.night_surcharge === true,
+    basis,
+  }
+}
+
 function toTransitStatusCard(output: unknown): AgentCard | null {
   const o = asRecord(output)
   if (!o || o.error) return null
@@ -582,6 +644,12 @@ function toCards(toolName: string, output: unknown): AgentCard[] {
   if (toolName === 'get_weather') return only(toWeatherCard(output))
   if (toolName === 'search_activities') return only(toMissionsCard(output))
   if (toolName === 'get_transit_status') return only(toTransitStatusCard(output))
+  if (toolName === 'estimate_ride') {
+    /* 查不到地點時照實說，別讓模型自己補一個車資 */
+    const failure = asString(o?.error)
+    if (failure) return [{ kind: 'notice', message: failure }]
+    return only(toRideEstimateCard(output))
+  }
   return []
 }
 

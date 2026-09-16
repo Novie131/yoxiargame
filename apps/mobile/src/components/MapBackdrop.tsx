@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { Map } from './Map'
+import { Map, type MapMarker } from './Map'
 import { useUserLocation } from '@/lib/location'
 
 /*
@@ -15,13 +15,23 @@ import { useUserLocation } from '@/lib/location'
  */
 export function MapBackdrop({
   zoom = 15,
+  center,
+  markers = [],
   children,
 }: {
   /** 預設 15，大約是看得到街廓與路名的層級，適合叫車的取放點 */
   zoom?: number
+  /*
+   * 視野中心。不給就用使用者的位置 ——
+   * 叫車流程選好目的地之後要看的是那一段路，不是他站的地方。
+   */
+  center?: { lat: number; lon: number } | null
+  /** 上車點與下車點 */
+  markers?: MapMarker[]
   children?: ReactNode
 }) {
   const location = useUserLocation()
+  const focus = center ?? { lat: location.lat, lon: location.lon }
 
   return (
     <div className="relative min-h-0 flex-1 bg-surface-3">
@@ -33,8 +43,9 @@ export function MapBackdrop({
         */}
       <div className="absolute inset-0">
         <Map
-          center={{ lng: location.lon, lat: location.lat }}
+          center={{ lng: focus.lon, lat: focus.lat }}
           zoom={zoom}
+          markers={markers}
           /* 沒定位到就不畫藍點，只把視野放在預設位置（臺北市信義區） */
           userLocation={location.precise ? { lng: location.lon, lat: location.lat } : null}
           controls={false}

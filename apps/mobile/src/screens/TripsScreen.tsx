@@ -204,7 +204,16 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
           <span className="text-[15px]">💼</span>
           <p className="text-[12px] font-semibold text-success">每日通勤</p>
         </div>
-        <button type="button" aria-label="更多" className="flex gap-1 pt-2">
+        {/*
+          * 設計稿的「⋯」。唯一有意義的去處是通勤設定，所以就直接接過去 ——
+          * 為了一個選項開一張選單，多一次點擊而已。
+          */}
+        <button
+          type="button"
+          aria-label="編輯通勤路線"
+          onClick={onEdit}
+          className="flex gap-1 pt-2"
+        >
           {[0, 1, 2].map((i) => (
             <span key={i} className="h-1.5 w-1.5 rounded-full bg-line" />
           ))}

@@ -13,6 +13,7 @@ import { clearRoute, readRoute, saveRoute, setNotifications } from './services/c
 import { applySchedule } from './services/metro-schedule.ts'
 import { planMetroRoutes } from './services/route-planner.ts'
 import type { UserLocation } from './services/place.ts'
+import { estimateRide } from './services/ride.ts'
 import { compareTripOptions } from './services/trip-options.ts'
 import { pollTransit } from './services/transit-watch.ts'
 import {
@@ -318,6 +319,50 @@ app.get('/trip/options', async (c) => {
   } catch (error) {
     console.error('[trip/options]', error)
     return c.json({ error: '交通選項暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 叫車估價。
+ *
+ * **不是 yoxi 的報價** —— 依臺北市公告計程車費率估算，公式與理由見
+ * services/ride.ts。回傳的 basis 欄位要原封不動顯示在畫面上。
+ *
+ * 收座標而不是地名：叫車流程的上下車點是使用者在地圖上選的，前端已經有座標了，
+ * 再繞一次地理編碼只會多一次往返、而且可能解析到別的地方去。
+ * 需要從地名查的情境走 agent 的 estimate_ride 工具。
+ */
+app.get('/ride/estimate', async (c) => {
+  const fromLat = Number(c.req.query('fromLat'))
+  const fromLon = Number(c.req.query('fromLon'))
+  const toLat = Number(c.req.query('toLat'))
+  const toLon = Number(c.req.query('toLon'))
+
+  const coords = [fromLat, fromLon, toLat, toLon]
+  if (coords.some((n) => !Number.isFinite(n))) {
+    return c.json({ error: '四個座標參數都必須是數字' }, 400)
+  }
+  if (Math.abs(fromLat) > 90 || Math.abs(toLat) > 90) {
+    return c.json({ error: '緯度超出合理範圍' }, 400)
+  }
+  if (Math.abs(fromLon) > 180 || Math.abs(toLon) > 180) {
+    return c.json({ error: '經度超出合理範圍' }, 400)
+  }
+
+  try {
+    const estimate = estimateRide(
+      { lat: fromLat, lon: fromLon },
+      { lat: toLat, lon: toLon },
+    )
+    /*
+     * 不能久快取：車資與車程跟「現在幾點」有關（尖峰、離峰、夜間加成），
+     * 08:00 算出來的估價放到 11:00 就是錯的。抓兩分鐘，跟 /transit/plan 一致。
+     */
+    c.header('Cache-Control', 'public, max-age=120')
+    return c.json(estimate)
+  } catch (error) {
+    console.error('[ride/estimate]', error)
+    return c.json({ error: '車資估算暫時無法取得' }, 502)
   }
 })
 

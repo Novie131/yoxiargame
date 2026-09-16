@@ -60,13 +60,43 @@ Capacitor 8 使用 Swift Package Manager，不需要 CocoaPods。
 `apps/mobile/ios` 與 `apps/mobile/android` 不進版控，可用 `npx cap add` 重建；
 若之後要寫自訂原生程式碼，需把 `.gitignore` 裡那兩行拿掉。
 
+## Demo 怎麼跑
+
+```bash
+npm run db:up                                   # Postgres + Redis
+npm --prefix apps/api run migrate               # 套用 migration
+npm --prefix apps/api run seed:missions         # 探索頁的任務資料
+npm --prefix apps/api run seed:notification     # 一則示範的通勤異常通知（選用）
+npm run dev:api                                 # 後端 :3000
+npm run dev                                     # 前端 :5173
+```
+
+`/dev` 是原型導覽頁，可直接跳到任一畫面。
+
+叫車流程有四個入口，都進同一條路：探索頁任務的「叫車前往」、對話問車資後的估價卡、
+通知收件匣的「改叫計程車」、下雨情境的「立即叫車」。
+
+`seed:notification` 要帶裝置的 `X-User-Ref`（前端 localStorage 的 `yoxi.userRef`），
+不給就寫給 `dev-user`。清除：`DELETE FROM notifications WHERE provider = 'demo-seed';`
+
 ## 目前狀態
 
-設計稿 11 個畫面已實作完成。天氣、捷運路徑規劃、捷運與公車即時狀態已接真實來源；
-叫車估價（`estimate_ride`）仍是假資料。詳細進度與待辦見 `Document/README.md`。
+設計稿 11 個畫面已實作完成。天氣、捷運路徑規劃、捷運與公車即時狀態、地圖圖磚
+（MapLibre + OpenStreetMap）都已接真實來源。設定頁與會員頁有提案版（設計稿未提供）。
+詳細進度與待辦見 `Document/ROADMAP.md`，設計稿索引見 `Document/README.md`。
 
-未完成：設定頁與會員頁（設計稿未提供）、真實地圖圖磚、中央氣象署串接、
-yoxi 叫車估價 API。
+未完成，依優先序：
+
+1. **Workers 上沒有資料庫** —— `pg` 需要 TCP，Workers 不支援，所以線上部署的任務標記、
+   通勤路線、通知、排程監看全是空的（本機 Node 部署正常，這個差異很容易被忽略）。
+   程式碼側已改成走 Cloudflare Hyperdrive，**剩下開一台雲端 Postgres、跑 migration、
+   填 id** —— 步驟寫在 `apps/api/wrangler.toml`。
+2. **叫車的實際報價與派車** —— 流程本身已完整可走：估價依**臺北市公告計程車費率**
+   實算（`services/ride.ts`），四頁串成同一趟。但那不是 yoxi 會收多少錢，
+   派車與司機也還是模擬的。卡在 yoxi API 的合作。
+3. **沒有登入** —— `X-User-Ref` 是裝置識別不是身分驗證，所以會員頁統計是假的、
+   「今天的行程」只能存在前端。
+4. **原生能力一個都還沒裝** —— 背景定位、推播、地理圍欄、AR。
 
 ### 位置與路徑規劃
 

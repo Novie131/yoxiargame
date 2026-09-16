@@ -7,11 +7,13 @@ import type {
   LocationRequestCard,
   MissionsCard,
   NoticeCard,
+  RideEstimateCard,
   RoutePlanCard,
   TransitStatusCard,
   WeatherCard,
 } from '@/lib/agent'
 import { lookupPlace, requestLocation, setManualLocation } from '@/lib/location'
+import { formatFare, trafficLabel } from '@/lib/ride'
 import { addTrip, useTrips } from '@/lib/trips'
 
 /*
@@ -419,6 +421,59 @@ function Missions({ card }: { card: MissionsCard }) {
   )
 }
 
+/*
+ * 叫車估價。
+ *
+ * 版面的重點順序刻意是「車資 → 依據 → 動作」：
+ * basis 那一行緊跟在數字下面，不能移到卡片最底下當小字 ——
+ * 它要跟數字一起被讀到，不是讀完才補充。
+ */
+function RideEstimate({ card }: { card: RideEstimateCard }) {
+  const navigate = useNavigate()
+  const hasCoords = card.toLat !== 0 && card.toLon !== 0
+
+  return (
+    <Shell>
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="min-w-0 truncate text-[15px] font-bold">
+          {card.from} → {card.to}
+        </h3>
+        <span className="shrink-0 text-[12px] text-muted">{trafficLabel(card.traffic)}</span>
+      </div>
+
+      <div className="mt-2 flex items-baseline gap-3">
+        <p className="text-[20px] font-bold text-primary">{formatFare(card.fare)}</p>
+        <p className="text-[13px] text-muted">
+          約 {card.durationMinutes} 分鐘・{card.distanceKm} 公里
+          {card.eta && `・${card.eta} 抵達`}
+        </p>
+      </div>
+
+      <p className="mt-1 text-[12px] text-subtle">
+        {card.basis}
+        {card.nightSurcharge && '（含夜間加成）'}
+      </p>
+
+      {hasCoords && (
+        <button
+          type="button"
+          onClick={() => {
+            const params = new URLSearchParams({
+              to: card.to,
+              toLat: String(card.toLat),
+              toLon: String(card.toLon),
+            })
+            navigate(`/ride/booking?${params}`)
+          }}
+          className="mt-2.5 w-full rounded-lg bg-primary py-2 text-[13px] font-semibold text-white transition-transform active:scale-[.98]"
+        >
+          叫車前往
+        </button>
+      )}
+    </Shell>
+  )
+}
+
 function TransitStatus({ card }: { card: TransitStatusCard }) {
   const alert = card.status === 'alert'
 
@@ -483,5 +538,6 @@ export function AgentCardView({
   if (card.kind === 'location_request') return <LocationRequest card={card} onRetry={onRetry} />
   if (card.kind === 'missions') return <Missions card={card} />
   if (card.kind === 'notice') return <Notice card={card} />
+  if (card.kind === 'ride_estimate') return <RideEstimate card={card} />
   return <TransitStatus card={card} />
 }

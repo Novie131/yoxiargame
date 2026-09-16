@@ -1,3 +1,5 @@
+import { useNavigate } from 'react-router'
+
 import { ChevronLeftIcon, PinIcon, StarIcon } from '@/components/icons'
 import { useMember } from '@/lib/member'
 
@@ -20,14 +22,28 @@ const stats = [
   { label: '走過距離', value: '86 km' },
 ]
 
-const menu = [
-  { label: '我的任務', value: '進行中 3', Icon: StarIcon },
-  { label: '收藏地點', value: '12', Icon: PinIcon },
-  { label: '行程紀錄', value: '' },
-  { label: '兌換紀錄', value: '' },
+/*
+ * 選單。有去處的才接上路由，沒有的標「規劃中」且不能按 ——
+ * 跟設定頁同一個原則：一顆按下去什麼都不會發生的列，比沒有這一列更糟。
+ *
+ * 收藏地點與兌換紀錄背後的功能還不存在（沒有收藏，也沒有點數系統），
+ * 留在畫面上是為了保住這頁的資訊架構。
+ */
+const menu: Array<{
+  label: string
+  value?: string
+  Icon?: typeof StarIcon
+  to?: string
+  planned?: boolean
+}> = [
+  { label: '我的任務', Icon: StarIcon, to: '/explore' },
+  { label: '收藏地點', Icon: PinIcon, planned: true },
+  { label: '行程紀錄', to: '/trips' },
+  { label: '兌換紀錄', planned: true },
 ]
 
 export function MemberScreen() {
+  const navigate = useNavigate()
   const { displayName, avatarUrl, registered } = useMember()
 
   return (
@@ -70,6 +86,14 @@ export function MemberScreen() {
             </div>
           ))}
         </div>
+        {/*
+          * 標在數字旁邊，不是頁尾。
+          * 頁尾那行小字要捲到底才看得到，而這三個數字是這頁最醒目的東西 ——
+          * demo 時最容易被當成真的就是它們。
+          */}
+        <p className="mt-1.5 text-center text-[11px] text-subtle">
+          示範數值・完成任務與點數尚未實作，需要先有登入機制
+        </p>
 
         {/* 下一級進度 */}
         <div className="mt-3 rounded-2xl bg-surface px-4 py-3.5">
@@ -90,25 +114,34 @@ export function MemberScreen() {
 
         {/* 選單 */}
         <div className="mt-4 divide-y divide-black/[.06] overflow-hidden rounded-2xl bg-surface">
-          {menu.map(({ label, value, Icon }) => (
+          {menu.map(({ label, value, Icon, to, planned }) => (
             <button
               key={label}
               type="button"
-              className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
+              onClick={to ? () => navigate(to) : undefined}
+              disabled={!to}
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left disabled:opacity-60"
             >
               {Icon && <Icon />}
-              <span className="flex-1 text-[15px]">{label}</span>
-              {value && <span className="text-[13px] text-subtle">{value}</span>}
-              <span className="rotate-180">
-                <ChevronLeftIcon />
+              <span className="flex-1 text-[15px]">
+                {label}
+                {planned && (
+                  <span className="ml-1.5 align-middle text-[10px] font-medium">規劃中</span>
+                )}
               </span>
+              {value && <span className="text-[13px] text-subtle">{value}</span>}
+              {to && (
+                <span className="rotate-180">
+                  <ChevronLeftIcon />
+                </span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
       <p className="mt-6 px-5 text-center text-[11px] text-subtle">
-        此頁為提案版，尚未取得設計稿；資料為假資料
+        此頁為提案版，尚未取得設計稿
       </p>
     </div>
   )

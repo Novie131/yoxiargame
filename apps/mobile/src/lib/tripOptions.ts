@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 
 import { API_URL } from './api'
+import type { RideEstimate } from './ride'
 
 /*
  * 「怎麼去」的選項，資料來自後端的 /trip/options。
  *
  * 選項已經由後端依實際時間排好序。畫面**不要**再重排、也不要把叫車拉到前面 ——
  * 那個排序就是這個功能的重點：讓使用者看到誠實的比較再自己選。
+ *
+ * 叫車現在也有時間與車資了（依公告費率估算），所以它會跟其他選項一起排序，
+ * 短程時排到第一是正常的 —— 不推叫車的意思是不插隊，不是一律墊底。
  */
 
 export type WalkOption = { mode: 'walk'; minutes: number; distanceMeters: number }
@@ -23,8 +27,8 @@ export type MetroOption = {
   }
 }
 
-/** 刻意沒有時間與車資：目前沒有接任何叫車估價來源 */
-export type RideOption = { mode: 'ride'; distanceMeters: number }
+/** 車資與車程是估算值，basis 說明來源 —— 顯示數字時必須一起顯示它 */
+export type RideOption = { mode: 'ride'; distanceMeters: number; estimate: RideEstimate }
 
 export type TripOption = WalkOption | MetroOption | RideOption
 

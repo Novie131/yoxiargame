@@ -1,3 +1,4 @@
+import { estimateRide, type RideEstimate } from './ride.ts'
 import { planMetroRoutes, type RoutePlan } from './route-planner.ts'
 import { findNearestStation, hasTdxCredentials, haversineMeters } from './tdx.ts'
 
@@ -14,9 +15,10 @@ import { findNearestStation, hasTdxCredentials, haversineMeters } from './tdx.ts
  * 誠實範圍：
  *   捷運時間   TDX 實際站間行駛時間（route-planner）
  *   步行時間   由直線距離估算，見下面兩個常數
- *   叫車       **沒有時間也沒有車資** —— 我們沒有任何資料來源，
- *              所以只給動作，不給數字。編一個「約 15 分鐘 / NT$250」
- *              比不給更糟。
+ *   叫車       依臺北市公告計程車費率估算（services/ride.ts），**不是 yoxi 報價**。
+ *              這一欄原本刻意留白 —— 當時沒有任何來源，編一個
+ *              「約 15 分鐘 / NT$250」比不給更糟。現在有公式也有來源了，
+ *              所以給數字，但 basis 必須一起顯示。
  */
 
 /*
@@ -80,9 +82,10 @@ export type RideOption = {
   mode: 'ride'
   distanceMeters: number
   /*
-   * 刻意沒有 minutes 與 fare：目前沒有接任何叫車服務的估價 API。
-   * 等接上 yoxi 之後再補，在那之前畫面不要顯示編出來的數字。
+   * 依公告費率估算。estimate.basis 說明數字怎麼來的，
+   * 畫面上要顯示它 —— 使用者得知道這不是 yoxi 的報價。
    */
+  estimate: RideEstimate
 }
 
 export type TripOption = WalkOption | MetroOption | RideOption
@@ -151,15 +154,29 @@ export async function compareTripOptions(
     }
   }
 
+  /*
+   * 叫車永遠是一個選項。現在它有估計時間了，所以跟其他選項一起排序 ——
+   * 以前固定墊底是因為沒有時間依據，不是因為要壓低它。
+   *
+   * 排序照實際時間，叫車常常會排到第一。這沒有問題：三公里的路它本來就最快。
+   * 不預設推叫車的意思是「不插隊」，不是「一律排最後」。
+   */
+  options.push({
+    mode: 'ride',
+    distanceMeters,
+    estimate: estimateRide({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon }),
+  })
+
   /* 依實際時間排序。有依據的排前面，這是「誠實比較」的具體意思。 */
   options.sort((a, b) => {
     const t = (o: TripOption) =>
-      o.mode === 'walk' ? o.minutes : o.mode === 'metro' ? o.totalMinutes : Infinity
+      o.mode === 'walk'
+        ? o.minutes
+        : o.mode === 'metro'
+          ? o.totalMinutes
+          : o.estimate.durationMinutes
     return t(a) - t(b)
   })
-
-  /* 叫車永遠可以選，但因為沒有時間依據，固定放最後 */
-  options.push({ mode: 'ride', distanceMeters })
 
   return { distanceMeters, arrived: false, options }
 }

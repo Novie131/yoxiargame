@@ -21,10 +21,41 @@ compatibility_flags = ["nodejs_compat"]
 # 間隔刻意不小於 services/tdx.ts 的事件快取 TTL（60 秒）—— 那樣輪詢會命中
 # 使用者請求也在用的快取，不會額外吃掉 TDX 每分鐘 5 次的額度。
 #
-# 注意：Workers 上的資料庫連線還沒接（pg 需要 TCP），所以這個排程目前會 no-op。
-# 詳見 src/worker.ts 的 scheduled() 註解。
+# 要有下面的 Hyperdrive 綁定，這一輪才會真的產生通知；沒有的話會安靜略過。
 [triggers]
 crons = ["*/2 * * * *"]
+
+# ── 資料庫（Hyperdrive）──
+#
+# Workers 不能開任意 TCP 連線，pg 因此在上面是死的。Hyperdrive 在 Cloudflare
+# 邊緣代理這條連線並自己維護連線池，Worker 端照舊用 pg —— 程式碼與 Node 部署共用。
+# 接線在 src/worker.ts 的 applyEnv()，不需要再改任何程式碼。
+#
+# 綁定沒設定時，hasDatabase() 是 false，資料庫相關功能會停用而不是壞掉。
+# 也就是說下面這幾行在打開之前，線上的任務標記、通勤路線、通知都會是空的。
+#
+# 設定步驟：
+#
+# 1. 先有一台「公開連得到」的 Postgres。目前 infra/compose 那台跑在本機 Colima 裡，
+#    Hyperdrive 連不到，所以要另外開一台雲端的（Neon / Supabase / RDS 都可以），
+#    **並且要能裝 PostGIS** —— missions 的地理查詢靠它。
+#
+# 2. 把 7 支 migration 套到那台上。migrate.ts 讀檔案系統，不能在 Workers 上跑，
+#    所以是從本機指著雲端資料庫跑：
+#      DATABASE_URL='postgres://...雲端那台...' npm run db:migrate
+#
+# 3. 建立 Hyperdrive 設定，把它回傳的 id 填到下面：
+#      npx wrangler hyperdrive create yoxi-db --connection-string='postgres://...'
+#
+# 4. 取消下面三行的註解、填入 id，然後 npm --prefix apps/api run cf:deploy
+#
+# id 不是機密（真正的帳密存在 Cloudflare 那邊的 Hyperdrive 設定裡），可以進版控。
+#
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = "<步驟 3 產生的 id>"
+# 本機 wrangler dev 時改連 compose 那台，不經過 Hyperdrive
+# localConnectionString = "postgres://movequest:movequest@localhost:5432/movequest"
 
 [observability]
 enabled = true

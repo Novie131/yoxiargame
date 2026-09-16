@@ -1,4 +1,5 @@
 import { app } from './app.ts'
+import { useHyperdrive } from './db/client.ts'
 import { pollTransit } from './services/transit-watch.ts'
 
 /*
@@ -18,11 +19,26 @@ import { pollTransit } from './services/transit-watch.ts'
  * 這種方式綁在 Worker script 本身而非某個版本，會在後續部署間保留。
  */
 
+/** Hyperdrive 綁定的形狀。wrangler.toml 的 [[hyperdrive]] 會把它掛在 env 上 */
+type HyperdriveBinding = { connectionString?: unknown }
+
 function applyEnv(env: Record<string, unknown>) {
   for (const [key, value] of Object.entries(env ?? {})) {
     // 只複製字串型設定，KV、R2 之類的資源綁定不屬於環境變數
     if (typeof value === 'string') process.env[key] = value
   }
+
+  /*
+   * Hyperdrive 是資源綁定不是環境變數，所以上面那個迴圈跳過了它（值是物件）。
+   * 它帶的連線字串要單獨交給 db/client.ts —— 那之後整個後端用的還是 pg，
+   * 跟 Node 部署完全同一套程式碼。
+   *
+   * 沒有設定綁定時什麼也不做，hasDatabase() 就會是 false，
+   * 資料庫相關的功能照舊停用而不是壞掉。
+   */
+  const hyperdrive = env?.HYPERDRIVE as HyperdriveBinding | undefined
+  const url = hyperdrive?.connectionString
+  if (typeof url === 'string' && url) useHyperdrive(url)
 }
 
 export default {
@@ -34,13 +50,8 @@ export default {
   /*
    * Cron Trigger（見 wrangler.toml 的 [triggers]）。每次觸發跑一輪交通監看。
    *
-   * ⚠️ 目前這在 Workers 上會直接 no-op：db/client.ts 用的 pg 需要 TCP，
-   * Workers 不支援，所以那邊不會設定 DATABASE_URL，pollTransit 會回
-   * 「未設定 DATABASE_URL」就結束。真正會跑的是 Node 部署（src/index.ts）。
-   *
-   * 要讓 Workers 也能跑，得把資料庫連線換成 Workers 相容的方式
-   * （Hyperdrive，或 Neon / Supabase 的 HTTP driver）。這裡先把排程接好，
-   * 換掉連線層之後不用再動這個檔案。
+   * 要有 Hyperdrive 綁定這一輪才會真的做事 —— 沒有綁定時 hasDatabase() 是 false，
+   * pollTransit 會回「沒有資料庫連線」就結束，不會拋錯。設定步驟見 wrangler.toml。
    */
   async scheduled(_event: ScheduledController, env: Record<string, unknown>, ctx: ExecutionContext) {
     applyEnv(env)

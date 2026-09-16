@@ -104,7 +104,7 @@ function distanceText(meters: number): string {
 }
 
 export async function recommendMissions(at: Date = new Date()): Promise<DiscoveryResult> {
-  if (!hasDatabase()) return { ok: false, reason: '未設定 DATABASE_URL', ...EMPTY }
+  if (!hasDatabase()) return { ok: false, reason: '沒有資料庫連線', ...EMPTY }
 
   const now = taipeiNow(at)
   const result: DiscoveryResult = { ok: true, ...EMPTY }

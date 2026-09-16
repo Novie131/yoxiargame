@@ -4,22 +4,29 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { BottomSheet } from '@/components/BottomSheet'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { CarIcon, ChevronLeftIcon, CrosshairIcon } from '@/components/icons'
+import { FALLBACK_LABEL, requestLocation, useUserLocation } from '@/lib/location'
+import {
+  formatFare,
+  startRide,
+  trafficLabel,
+  useResolvedPlace,
+  useRideEstimate,
+  type RidePlace,
+} from '@/lib/ride'
 
 /*
  * 對應設計稿 frame：yoxi-ride-estimate（叫車 ②／預估車資）。此頁無 tab bar
  *
- * 下車地點會從網址參數帶入 —— 探索頁的任務面板按「叫車前往」時會帶著
- * 任務名稱與座標過來，那就是「精準導流」實際落地的地方。沒有帶參數時
- * 沿用設計稿的示範地點。
+ * 上下車點與三個數字全部來自上一頁帶過來的座標：
+ * 車程與車資由後端依**臺北市公告計程車費率**估算（services/ride.ts），
+ * 不是 yoxi 的報價 —— 所以畫面上必須把來源寫出來。
  *
- * 車程、抵達時間、車資仍是設計稿的數字：目前沒有接任何叫車估價來源。
+ * 在這之前這三個數字是寫死的（約 15 分鐘 / 14:25 / NT$250-320），
+ * 不管使用者要去哪裡都一樣。那比留白更危險：它看起來完全像真的。
+ *
+ * 探索頁的任務面板按「叫車前往」時會帶著任務名稱與座標過來，
+ * 那就是「精準導流」實際落地的地方。
  */
-
-const stats = [
-  { label: '預估車程', value: '約 15 分鐘' },
-  { label: '預估抵達', value: '14:25' },
-  { label: '預估車資', value: 'NT$ 250-320', highlight: true },
-]
 
 const carTypes = [
   { id: 'sedan', name: '轎車', note: '最快' },
@@ -31,13 +38,86 @@ export function EstimateScreen() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const [selected, setSelected] = useState('sedan')
+  const location = useUserLocation()
 
-  /* 從探索頁導流過來時帶著任務名稱；沒有就用設計稿的示範地點 */
-  const destination = params.get('to')?.trim() || '臺北松山機場'
+  const num = (key: string) => {
+    const n = Number(params.get(key))
+    return Number.isFinite(n) && n !== 0 ? n : null
+  }
+
+  /*
+   * 上車點沒帶就用目前定位 —— 從探索頁直接跳進來時只會帶目的地。
+   * 名稱同樣不顯示經緯度，那對使用者沒有意義。
+   */
+  const here: RidePlace = {
+    label: location.label ?? (location.precise ? '目前位置' : `${FALLBACK_LABEL}（預設位置）`),
+    lat: location.lat,
+    lon: location.lon,
+  }
+
+  /*
+   * 通勤異常通知帶的是站名而沒有座標（見 lib/ride 的 useResolvedPlace），
+   * 所以兩端都要能接受「只有地名」的情況。
+   */
+  const pickupState = useResolvedPlace(
+    params.get('from')?.trim() || null,
+    num('fromLat'),
+    num('fromLon'),
+    here,
+  )
+  const dropoffState = useResolvedPlace(params.get('to')?.trim() || null, num('toLat'), num('toLon'))
+
+  const pickup = pickupState.status === 'ready' ? pickupState.place : here
+  const dropoff = dropoffState.status === 'ready' ? dropoffState.place : null
+  const resolving = dropoffState.status === 'resolving'
+
+  const estimate = useRideEstimate(pickup, dropoff)
+
+  const confirm = () => {
+    if (estimate.status !== 'ready' || !dropoff) return
+    startRide({
+      pickup,
+      dropoff,
+      estimate: estimate.data,
+      carType: carTypes.find((c) => c.id === selected)?.name ?? '轎車',
+    })
+    navigate('/ride/driver')
+  }
+
+  /*
+   * 三個數字共用同一個狀態：要嘛都有，要嘛都在載入。
+   * 分開處理會出現「車程有了、車資還在轉」那種半成品畫面。
+   */
+  const stats =
+    estimate.status === 'ready'
+      ? [
+          { label: '預估車程', value: `約 ${estimate.data.durationMinutes} 分鐘` },
+          { label: '預估抵達', value: estimate.data.eta },
+          { label: '預估車資', value: formatFare(estimate.data.fare), highlight: true },
+        ]
+      : [
+          { label: '預估車程', value: '—' },
+          { label: '預估抵達', value: '—' },
+          { label: '預估車資', value: '—', highlight: true },
+        ]
 
   return (
     <div className="flex h-full flex-col">
-      <MapBackdrop>
+      <MapBackdrop
+        center={dropoff ?? pickup}
+        markers={[
+          { id: 'pickup', position: { lng: pickup.lon, lat: pickup.lat }, label: pickup.label },
+          ...(dropoff
+            ? [
+                {
+                  id: 'dropoff',
+                  position: { lng: dropoff.lon, lat: dropoff.lat },
+                  label: dropoff.label,
+                },
+              ]
+            : []),
+        ]}
+      >
         <button
           type="button"
           aria-label="返回"
@@ -50,6 +130,7 @@ export function EstimateScreen() {
         <button
           type="button"
           aria-label="回到目前位置"
+          onClick={() => void requestLocation()}
           className="absolute bottom-4 right-4 flex h-11 w-11 items-center justify-center rounded-full bg-surface shadow-[0_3px_14px_rgba(22,32,55,.18)]"
         >
           <CrosshairIcon />
@@ -59,24 +140,31 @@ export function EstimateScreen() {
       <BottomSheet>
         <div className="flex items-baseline justify-between">
           <h1 className="text-[20px] font-bold">預估車資</h1>
-          <span className="text-[13px] font-medium text-primary">已套用優惠券</span>
+          {estimate.status === 'ready' && (
+            <span className="text-[12px] font-medium text-subtle">
+              {trafficLabel(estimate.data.traffic)}
+              {estimate.data.nightSurcharge && '・含夜間加成'}
+            </span>
+          )}
         </div>
 
         <div className="relative mt-3 space-y-3 rounded-2xl bg-surface-2 p-3.5">
           <span className="absolute left-[10px] top-7 h-8 w-px bg-line" />
           <div className="flex gap-3">
             <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-success" />
-            <div className="-mt-1">
+            <div className="-mt-1 min-w-0">
               <p className="text-[12px] text-subtle">上車地點</p>
-              <p className="text-[15px] font-semibold">大安區新生南路三段22巷2-3號</p>
+              <p className="truncate text-[15px] font-semibold">{pickup.label}</p>
             </div>
           </div>
           <div className="border-t border-black/[.06] pt-3">
             <div className="flex gap-3">
               <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-primary" />
-              <div className="-mt-1">
+              <div className="-mt-1 min-w-0">
                 <p className="text-[12px] text-subtle">下車地點</p>
-                <p className="text-[15px] font-semibold">{destination}</p>
+                <p className="truncate text-[15px] font-semibold">
+                  {dropoff?.label ?? (resolving ? '查詢中…' : '尚未選擇')}
+                </p>
               </div>
             </div>
           </div>
@@ -88,9 +176,7 @@ export function EstimateScreen() {
               key={label}
               className={[
                 'rounded-xl py-2.5 text-center',
-                highlight
-                  ? 'border border-primary bg-primary-tint'
-                  : 'bg-surface-2',
+                highlight ? 'border border-primary bg-primary-tint' : 'bg-surface-2',
               ].join(' ')}
             >
               <p className="text-[11px] text-subtle">{label}</p>
@@ -105,6 +191,29 @@ export function EstimateScreen() {
             </div>
           ))}
         </div>
+
+        {/*
+          * 數字的來源。這一行不是免責聲明，是這頁唯一誠實的地方 ——
+          * 拿掉它，上面那三格就跟接上 yoxi 之後長得一模一樣。
+          */}
+        {estimate.status === 'ready' && (
+          <p className="mt-2 text-center text-[11px] text-subtle">
+            {estimate.data.basis}・{estimate.data.distanceKm} 公里
+          </p>
+        )}
+        {estimate.status === 'loading' && dropoff && (
+          <p className="mt-2 text-center text-[11px] text-subtle">估算中…</p>
+        )}
+        {dropoffState.status === 'none' && params.get('to') && (
+          <p className="mt-2 text-center text-[11px] text-primary" role="alert">
+            查不到「{params.get('to')}」，請回上一頁重新選擇目的地
+          </p>
+        )}
+        {estimate.status === 'error' && (
+          <p className="mt-2 text-center text-[11px] text-primary" role="alert">
+            估價暫時取不到。沒有數字就不要猜，請稍後再試。
+          </p>
+        )}
 
         <div className="mt-3 grid grid-cols-3 gap-2.5 max-[359px]:gap-1.5">
           {carTypes.map(({ id, name, note }) => {
@@ -125,10 +234,9 @@ export function EstimateScreen() {
                 <span className="min-w-0">
                   <span className="block text-[14px] font-semibold">{name}</span>
                   <span
-                    className={[
-                      'block text-[11px]',
-                      on ? 'text-primary-soft' : 'text-subtle',
-                    ].join(' ')}
+                    className={['block text-[11px]', on ? 'text-primary-soft' : 'text-subtle'].join(
+                      ' ',
+                    )}
                   >
                     {note}
                   </span>
@@ -142,10 +250,11 @@ export function EstimateScreen() {
             但原型需要能往下一步走，所以補上。之後對到設計再調整。 */}
         <button
           type="button"
-          onClick={() => navigate('/ride/driver')}
-          className="mt-3 w-full rounded-xl bg-primary py-4 text-[17px] font-bold text-white transition-transform active:scale-[.98]"
+          onClick={confirm}
+          disabled={estimate.status !== 'ready' || !dropoff}
+          className="mt-3 w-full rounded-xl bg-primary py-4 text-[17px] font-bold text-white transition-transform active:scale-[.98] disabled:opacity-45"
         >
-          確認叫車
+          {dropoff ? '確認叫車' : resolving ? '查詢地點中…' : '請先選擇目的地'}
         </button>
       </BottomSheet>
     </div>
