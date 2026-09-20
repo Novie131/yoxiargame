@@ -33,12 +33,24 @@ export function TabBar() {
    * 反一次才知道按了會發生什麼。
    */
   const onAgent = pathname === '/'
-  const onRide = pathname.startsWith('/ride')
   /* 在助理頁就去叫車；其他任何地方（含叫車流程）都回助理 */
   const centerTo = onAgent ? RIDE_ENTRY : '/'
 
   return (
-    <nav className="safe-bottom shrink-0 border-t border-black/5 bg-surface">
+    /*
+     * pt-4 是給中央那顆鈕**保留**的空間，不是裝飾性的留白。
+     *
+     * 那顆鈕用 -top-4 往上突出 16px。在這之前它是突出到 nav 之外的，
+     * 於是壓在上方內容的底部 —— 聊天頁蓋到輸入列、叫車頁蓋到 CTA。
+     * 每個貼著 tab bar 的畫面都會中招。
+     *
+     * 一頁一頁補下邊距治不了本（新畫面還是會再踩一次），所以改成
+     * **nav 自己把那一截高度算進來**：鈕的上緣剛好落在 nav 的邊界線上，
+     * 視覺上仍然是浮出來的，但它不再侵占任何人的空間。
+     *
+     * 數值要跟下面的 -top-4 對得起來，兩個一起改。
+     */
+    <nav className="safe-bottom shrink-0 border-t border-black/5 bg-surface pt-4">
       <div className="relative grid h-14 grid-cols-5 items-center">
         {tabs.map(({ to, label, Icon }, i) => (
           <NavLink
@@ -79,14 +91,26 @@ export function TabBar() {
            * 不是直接拿掉 outline —— 那會讓鍵盤使用者看不出焦點在哪。
            * focus-visible 只在鍵盤操作時才套用，觸控與滑鼠點擊不會觸發。
            */
-          className="absolute left-1/2 -translate-x-1/2 -top-4 flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none transition-transform active:scale-95 focus-visible:ring-4 focus-visible:ring-ink/25"
+          className="absolute left-1/2 -translate-x-1/2 -top-4 flex h-14 w-14 items-center justify-center rounded-full outline-none transition-transform active:scale-95 focus-visible:ring-4 focus-visible:ring-ink/25"
           style={{
             background: 'var(--color-brand-red)',
-            /* 人在這顆鈕管的兩個模式裡時才發光 */
+            /*
+             * 兩層 box-shadow，各有各的工作：
+             *
+             * 1. 白色實心環 —— 這顆鈕壓在 tab bar 的上緣分隔線上，沒有環的話
+             *    那條線會直接穿過鈕的兩側，看起來像鈕被線切開。環把線切斷，
+             *    鈕才像是「浮在上面」而不是「貼在上面」。
+             *    用 box-shadow 而不是 border：border 會吃掉內距、把圖示擠小。
+             *
+             * 2. 中性陰影 —— 原本這裡是 rgba(234,62,40,.45) 的品牌色光暈，
+             *    在白底上會暈成一塊橘色髒污（實機看很明顯）。
+             *    陰影的工作是表達高度，不是表達顏色，所以改回中性的墨色。
+             *
+             * 也不再分「在不在這兩個模式裡」給不同陰影 —— 一顆鈕忽明忽暗
+             * 會被讀成故障。它現在要去哪裡，圖示已經講得很清楚了。
+             */
             boxShadow:
-              onAgent || onRide
-                ? '0 6px 18px rgba(234,62,40,.45)'
-                : '0 4px 12px rgba(0,0,0,.18)',
+              '0 0 0 4px var(--color-surface), 0 6px 16px rgba(22, 32, 55, .22)',
           }}
         >
           {onAgent ? <CarIcon active className="h-[30px] w-[30px]" /> : <YoxiMark />}
