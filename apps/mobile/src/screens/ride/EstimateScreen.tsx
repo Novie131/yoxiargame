@@ -13,6 +13,7 @@ import {
   useRideEstimate,
   type RidePlace,
 } from '@/lib/ride'
+import { copyDestination, YOXI_PASSENGER_LINK } from '@/lib/yoxiHandoff'
 
 /*
  * 對應設計稿 frame：yoxi-ride-estimate（叫車 ②／預估車資）。此頁無 tab bar
@@ -73,6 +74,30 @@ export function EstimateScreen() {
 
   const estimate = useRideEstimate(pickup, dropoff)
 
+  /*
+   * 交棒給真的 yoxi App。
+   *
+   * 這是這條流程的**主要動作** —— 派車是模擬的，讓使用者以為叫到車了
+   * 是整個原型裡唯一會真正害到他的地方。
+   *
+   * 目的地用剪貼簿帶過去（yoxi 沒有公開 deep link 參數，見 lib/yoxiHandoff）。
+   * 複製失敗不擋開啟 —— 少一個便利而已，不是錯誤。
+   */
+  const [copied, setCopied] = useState(false)
+
+  /*
+   * 只負責複製，**不負責開連結** —— 開連結是 <a> 自己的事。
+   * 這裡刻意不 await：await 會讓後面的跳轉離開使用者手勢，被瀏覽器擋掉。
+   */
+  const rememberDestination = () => {
+    if (!dropoff) return
+    void copyDestination(dropoff.label).then(setCopied)
+  }
+
+  /*
+   * 模擬流程。留著是因為設計稿的後兩頁（司機前往中、行程進行中）要有地方進，
+   * 但它已經不是主要路徑了 —— 降成次要按鈕，而且名字直接寫「模擬」。
+   */
   const confirm = () => {
     if (estimate.status !== 'ready' || !dropoff) return
     startRide({
@@ -246,8 +271,28 @@ export function EstimateScreen() {
           })}
         </div>
 
-        {/* 設計稿上沒有這顆 CTA（畫面在車型列之後就結束了），
-            但原型需要能往下一步走，所以補上。之後對到設計再調整。 */}
+        {/*
+          * 設計稿上沒有這顆 CTA（畫面在車型列之後就結束了）。
+          *
+          * 主要動作是**開啟 yoxi App**，不是走完我們自己的模擬流程：
+          * 上面那三個數字是真的（依公告費率實算），但派車不是，
+          * 讓人以為叫到車了是這條流程唯一會真正害到他的地方。
+          */}
+        {/*
+          * ── 為什麼主要動作是模擬流程，而不是交棒給 yoxi ──
+          *
+          * 交棒那條路是對的，但它**不適合當 demo 的主線**：
+          *   觀眾手機不一定裝了 yoxi，當場會變成下載頁
+          *   iOS 一旦記住「在 Safari 開啟」就會靜默停用該網域的 App 跳轉，
+          *   前一晚測好、隔天現場失效
+          *   而且 yoxi 沒有公開 deep link 參數，跳過去也帶不了目的地
+          *
+          * 所以主線用自成一體的模擬流程，交棒降成次要入口留著說明「正式版怎麼走」。
+          * 拿到官方參數之後再把主次對調。
+          *
+          * 但主線是模擬的這件事**必須寫在按鈕旁邊**，不是只寫在下一頁 ——
+          * 使用者是在按下去之前需要知道，不是按下去之後。
+          */}
         <button
           type="button"
           onClick={confirm}
@@ -256,6 +301,36 @@ export function EstimateScreen() {
         >
           {dropoff ? '確認叫車' : resolving ? '查詢地點中…' : '請先選擇目的地'}
         </button>
+        <p className="mt-2 text-center text-[11px] text-subtle">
+          示範流程：派車與司機為模擬，不會真的叫到車
+        </p>
+
+        {/*
+          * 交棒給真的 yoxi App。
+          *
+          * 這裡**必須**是真的 <a>，不能是 button + window.open：
+          * iOS 只在「使用者真的點了一個 <a href>」時才會把 universal link
+          * 交給 App 處理，用 JS 開的會直接在 Safari 裡打開那一頁，
+          * 看起來就是「按了沒跳轉」（實機踩過，見 lib/yoxiHandoff 的註解）。
+          */}
+        {dropoff && (
+          <>
+            <a
+              href={YOXI_PASSENGER_LINK}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={rememberDestination}
+              className="mt-2 block w-full rounded-xl border border-line/60 py-3 text-center text-[15px] font-semibold text-ink transition-transform active:scale-[.98]"
+            >
+              改用 yoxi App 叫車
+            </a>
+            <p className="mt-1.5 text-center text-[11px] text-subtle">
+              {copied
+                ? `已複製「${dropoff.label}」，在 yoxi 搜尋框貼上即可`
+                : '開啟 yoxi App（未安裝則前往官方下載頁）'}
+            </p>
+          </>
+        )}
       </BottomSheet>
     </div>
   )

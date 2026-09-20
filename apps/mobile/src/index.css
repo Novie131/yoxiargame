@@ -85,6 +85,15 @@ body {
    */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /*
+   * 行動版瀏覽器點擊時會在可點元素上蓋一層半透明藍色方塊。
+   * 那個預設色（iOS 是藍、Android Chrome 是灰藍）不屬於這套配色，
+   * 而且方形的高亮套在圓形按鈕外面特別明顯。
+   *
+   * 拿掉它是安全的 —— 每個可點元素都已經有 active:scale 的按壓回饋，
+   * 使用者仍然看得出來自己按到了。
+   */
+  -webkit-tap-highlight-color: transparent;
 }
 
 /*

@@ -2,11 +2,10 @@ import { Capacitor } from '@capacitor/core'
 import type { ReactNode } from 'react'
 import { useLocation } from 'react-router'
 
+import { hasTabBar } from '@/lib/layout'
+
 import { StatusBar } from './StatusBar'
 import { TabBar } from './TabBar'
-
-/* 這些設計稿是全螢幕流程，沒有 tab bar */
-const routesWithoutTabBar = new Set(['/ride/estimate'])
 
 /*
  * 手機殼。桌機瀏覽器開的時候夾在中間並限制寬度，比較接近設計稿的比例；
@@ -32,7 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     >
       <StatusBar />
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">{children}</main>
-      {!routesWithoutTabBar.has(pathname) && <TabBar />}
+      {hasTabBar(pathname) && <TabBar />}
     </div>
   )
 }

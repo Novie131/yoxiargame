@@ -46,7 +46,8 @@ export function TabBar() {
             to={to}
             // 中央那格留給 agent 按鈕，所以第 3 格要跳過
             style={{ gridColumnStart: i < 2 ? i + 1 : i + 2 }}
-            className="flex flex-col items-center gap-0.5"
+            /* 同上：預設焦點框在這排小圖示上一樣突兀 */
+            className="flex flex-col items-center gap-0.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             {({ isActive }) => (
               <>
@@ -71,7 +72,14 @@ export function TabBar() {
         <Link
           to={centerTo}
           aria-label={onAgent ? '叫車' : 'yoxi 助理'}
-          className="absolute left-1/2 -translate-x-1/2 -top-4 flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform active:scale-95"
+          /*
+           * outline-none + focus-visible：點下去之後瀏覽器會把焦點留在這顆鈕上，
+           * 預設的藍色外框會整圈套在紅色圓鈕外面，很顯眼也不屬於這套配色。
+           *
+           * 不是直接拿掉 outline —— 那會讓鍵盤使用者看不出焦點在哪。
+           * focus-visible 只在鍵盤操作時才套用，觸控與滑鼠點擊不會觸發。
+           */
+          className="absolute left-1/2 -translate-x-1/2 -top-4 flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none transition-transform active:scale-95 focus-visible:ring-4 focus-visible:ring-ink/25"
           style={{
             background: 'var(--color-brand-red)',
             /* 人在這顆鈕管的兩個模式裡時才發光 */
