@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { CarIcon, MapPinIcon } from './icons'
 import { missionRelativeTo, type Mission } from '@/lib/missions'
 import { formatFare } from '@/lib/ride'
-import { useTripOptions, type TripOption } from '@/lib/tripOptions'
+import { useTripOptions, type TripAdvice, type TripOption } from '@/lib/tripOptions'
 
 /*
  * 探索任務的詳情面板。
@@ -15,6 +15,9 @@ import { useTripOptions, type TripOption } from '@/lib/tripOptions'
  * 那是排序的結果不是推銷。
  *
  * 沿用叫車流程那套底部面板的視覺（圓角、把手、陰影），只是這裡是彈出式的。
+ *
+ * 面板上方那句「建議」也遵守同一條規則：它**不會**改變清單順序，
+ * 而且它說得出「別叫車」。只會說「叫車吧」的建議就只是包裝過的推銷。
  */
 
 function optionLabel(o: TripOption): { title: string; detail: string } {
@@ -26,12 +29,18 @@ function optionLabel(o: TripOption): { title: string; detail: string } {
   }
   if (o.mode === 'metro') {
     const legs = o.plan.legs.map((l) => l.line).join(' → ')
+    /*
+     * 票價放進標題而不是細節：時間與錢是同一個決定的兩半，
+     * 把錢藏在第二行等於還是只給了半句話。查不到就整段不顯示。
+     */
     return {
-      title: `搭捷運 約 ${o.totalMinutes} 分鐘`,
+      title: `搭捷運 約 ${o.totalMinutes} 分鐘${o.fare ? `・NT$${o.fare.singleJourney}` : ''}`,
       detail:
         `走 ${o.fromStation.walkMinutes} 分到${o.fromStation.name}・${legs}` +
         `${o.plan.transfers > 0 ? `・轉乘 ${o.plan.transfers} 次` : ''}` +
-        `・出站走 ${o.toStation.walkMinutes} 分`,
+        `・出站走 ${o.toStation.walkMinutes} 分` +
+        /* basis 要跟數字一起出現，不然使用者會以為這就是他會付的錢 */
+        (o.fare ? `・${o.fare.basis}` : ''),
     }
   }
   /*
@@ -42,6 +51,34 @@ function optionLabel(o: TripOption): { title: string; detail: string } {
     title: `叫車 約 ${o.estimate.durationMinutes} 分鐘`,
     detail: `${formatFare(o.estimate.fare)}・${o.estimate.distanceKm} 公里・依公告費率估算`,
   }
+}
+
+/*
+ * 「值不值得」的一句話。
+ *
+ * 兩種 verdict 用不同的配色，而且**勸退那一種不能比較不顯眼** ——
+ * 把「別叫車」畫得比「叫車吧」淡，就是用視覺把立場偷渡回去。
+ */
+function AdviceLine({ advice }: { advice: TripAdvice }) {
+  const suggestsRide = advice.verdict === 'ride'
+  return (
+    <div
+      className="mt-2 rounded-2xl px-4 py-3"
+      style={{
+        background: suggestsRide ? 'var(--color-primary-tint)' : 'var(--color-success-tint)',
+      }}
+    >
+      <p
+        className="text-[14px] font-semibold"
+        style={{ color: suggestsRide ? 'var(--color-primary)' : 'var(--color-success)' }}
+      >
+        {suggestsRide ? '☔️ ' : '🚇 '}
+        {advice.headline}
+      </p>
+      {/* 理由一定要顯示 —— 使用者得能自己判斷我們的推論成不成立 */}
+      <p className="mt-1 text-[12px] text-muted">{advice.reason}</p>
+    </div>
+  )
 }
 
 export function MissionSheet({
@@ -136,6 +173,13 @@ export function MissionSheet({
               <p className="mt-2 text-[13px] text-muted">
                 交通選項暫時取不到，你仍然可以直接叫車。
               </p>
+            )}
+
+            {/*
+              * 建議在清單上方，但清單順序不受它影響 —— 那個分離是這個功能的重點。
+              */}
+            {origin && trip.status === 'ready' && trip.data.advice && (
+              <AdviceLine advice={trip.data.advice} />
             )}
 
             {origin && trip.status === 'ready' && (

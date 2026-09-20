@@ -1,10 +1,13 @@
 import { hasDatabase } from '../db/client.ts'
 import {
+  DEFAULT_ROUTE_LABEL,
   deleteCommuteRoute,
   getCommuteRoute,
+  listCommuteRoutes,
   saveCommuteRoute,
   setNotificationEnabled,
   type CommuteRoute,
+  type RouteLabel,
   type TransportMode,
 } from '../db/repositories/commute.ts'
 import { USER_REF_PROVIDER } from '../identity.ts'
@@ -17,10 +20,15 @@ import { findStationPosition, hasTdxCredentials, resolveCommuteLine } from './td
  * 對話裡的 save_commute_route 工具 —— 兩邊必須存出完全一樣的東西，
  * 否則使用者用講的設定完，再打開表單會看到不一致的資料。
  * 所以推路線、寫資料庫、無資料庫時的退路都收在這裡，兩個入口只負責轉接。
+ *
+ * 一個人有兩條路線（上班 commute、回家 home），由 label 區分。
+ * 沒指定就是上班那條 —— 那是 008 之前唯一存在的一條，也是大多數人先設的。
  */
 
 export type SaveRouteInput = {
   userRef: string
+  /** 沒給就是上班那條 */
+  label?: RouteLabel
   origin: string
   destination: string
   mode: TransportMode
@@ -35,6 +43,11 @@ export type SaveRouteInput = {
   usualDays?: string[]
   usualTimeStart?: string | null
   usualTimeEnd?: string | null
+  /*
+   * 幾點要到目的地（HH:MM）。出發倒數的時間錨點，沒給就沒有倒數。
+   * 跟 usualTimeStart/End 不是同一件事，理由見 repositories/commute.ts。
+   */
+  arriveBy?: string | null
 }
 
 export type SaveRouteResult = {
@@ -120,15 +133,19 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
       )
     : [null, null]
 
+  const label = input.label ?? DEFAULT_ROUTE_LABEL
+
   const window = {
     usualDays: input.usualDays ?? [],
     usualTimeStart: input.usualTimeStart ?? null,
     usualTimeEnd: input.usualTimeEnd ?? null,
+    arriveBy: input.arriveBy ?? null,
   }
 
   if (!hasDatabase()) {
     return {
       route: {
+        label,
         origin,
         destination,
         mode: input.mode,
@@ -146,6 +163,7 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
   const route = await saveCommuteRoute({
     externalUserRef: input.userRef,
     provider: USER_REF_PROVIDER,
+    label,
     origin,
     destination,
     mode: input.mode,
@@ -160,9 +178,23 @@ export async function saveRoute(input: SaveRouteInput): Promise<SaveRouteResult>
   return { route, transferRequired, persisted: true }
 }
 
-export async function readRoute(userRef: string): Promise<CommuteRoute | null> {
+export async function readRoute(
+  userRef: string,
+  label: RouteLabel = DEFAULT_ROUTE_LABEL,
+): Promise<CommuteRoute | null> {
   if (!hasDatabase()) return null
-  return getCommuteRoute(userRef, USER_REF_PROVIDER)
+  return getCommuteRoute(userRef, USER_REF_PROVIDER, label)
+}
+
+/**
+ * 這個人設定過的所有路線。沒有資料庫時是空陣列。
+ *
+ * 設定頁與行程頁都要一次顯示兩條，各自打一次 readRoute 會是兩次往返，
+ * 而且兩次之間可能被改掉 —— 那會畫出一個從來沒有真的存在過的狀態。
+ */
+export async function readRoutes(userRef: string): Promise<CommuteRoute[]> {
+  if (!hasDatabase()) return []
+  return listCommuteRoutes(userRef, USER_REF_PROVIDER)
 }
 
 /**
@@ -174,12 +206,16 @@ export async function readRoute(userRef: string): Promise<CommuteRoute | null> {
 export async function setNotifications(
   userRef: string,
   enabled: boolean,
+  label: RouteLabel = DEFAULT_ROUTE_LABEL,
 ): Promise<CommuteRoute | null> {
   if (!hasDatabase()) return null
-  return setNotificationEnabled(userRef, USER_REF_PROVIDER, enabled)
+  return setNotificationEnabled(userRef, USER_REF_PROVIDER, enabled, label)
 }
 
-export async function clearRoute(userRef: string): Promise<boolean> {
+export async function clearRoute(
+  userRef: string,
+  label: RouteLabel = DEFAULT_ROUTE_LABEL,
+): Promise<boolean> {
   if (!hasDatabase()) return false
-  return deleteCommuteRoute(userRef, USER_REF_PROVIDER)
+  return deleteCommuteRoute(userRef, USER_REF_PROVIDER, label)
 }

@@ -9,6 +9,7 @@
  * 目前一個使用者只有一條通勤路線（設計稿的「每日通勤」），
  * 所以 user_ref_id 上直接下唯一索引，重新設定就是覆蓋。
  * 之後要支援多條（上班／回家／週末）時，把唯一索引改成 (user_ref_id, label)。
+ * （已經做了，見 008_commute_routes_home.sql。這裡保留原文當歷史記錄。）
  */
 
 CREATE TABLE IF NOT EXISTS commute_routes (

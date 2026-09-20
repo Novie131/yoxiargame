@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { ChatComposer } from '@/components/ChatComposer'
+import { ChatSuggestions } from '@/components/ChatSuggestions'
 import { AgentCardView } from '@/components/AgentCards'
 import { AssistantMessage, ThinkingDots, UserMessage } from '@/components/chat'
 import { HomeHeader } from '@/components/HomeHeader'
@@ -11,6 +12,9 @@ import { retryConversation, sendMessage, useConversation } from '@/lib/conversat
  *
  * 對話從空的開始。設計稿上那三則示範訊息移除了 ——
  * 想看還原稿的版本走 /dev 的情境頁（雨天、紫外線、通勤設定）。
+ *
+ * 空的時候給建議問句（ChatSuggestions）：這個助理有七個工具，
+ * 但一個空白輸入框不會告訴使用者任何一個的存在。
  */
 
 export function AgentActivityScreen() {
@@ -31,6 +35,9 @@ export function AgentActivityScreen() {
       <HomeHeader />
 
       <div className="flex-1 space-y-5 overflow-y-auto px-5 pb-4">
+        {/* 聊起來之後就不再顯示 —— 繼續佔著位置只會礙事 */}
+        {messages.length === 0 && !busy && <ChatSuggestions onPick={sendMessage} />}
+
         {messages.map((m, i) =>
           m.role === 'user' ? (
             <UserMessage key={i}>{m.content}</UserMessage>

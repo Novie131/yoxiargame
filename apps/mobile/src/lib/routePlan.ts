@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { API_URL } from './api'
+import type { RideEstimate } from './ride'
 
 /*
  * 捷運路徑規劃，資料來自後端的 /transit/plan。
@@ -25,6 +26,63 @@ export type RouteLeg = {
 export type MetroService =
   | { status: 'running' | 'unknown' }
   | { status: 'closed'; station: string; line: string; firstTrain: string; lastTrain: string }
+  /*
+   * 還有車，但末班車就在 30 分鐘內。
+   *
+   * minutesLeft 是**末班車到站**的時間，不含走到車站要花的時間 ——
+   * 畫面上一定要講清楚是哪一種，不然「還有 8 分鐘」會被讀成
+   * 「你還有 8 分鐘可以出門」，那是一個會讓人趕去車站然後撲空的誤會。
+   */
+  | {
+      status: 'closing-soon'
+      station: string
+      line: string
+      /** 這個方向的終點站。末班車分方向，不講方向的倒數沒有意義。 */
+      towards: string
+      minutesLeft: number
+      firstTrain: string
+      lastTrain: string
+    }
+
+/** 捷運票價。後端查不到時整個是 null，不要用距離推一個。 */
+export type MetroFare = {
+  /** 單程票全票（元） */
+  singleJourney: number
+  /*
+   * 這是哪一種票。要跟數字一起顯示 —— TDX 只公告單程票，
+   * 悠遊卡實際上有折扣，少了這句話使用者會以為這就是他會付的錢。
+   */
+  basis: string
+}
+
+/** 一站的無障礙資訊。形狀跟後端的 StationAccessibility 一致。 */
+export type StationFacility = {
+  stationId: string
+  /*
+   * 三態，一定要分得出來：
+   *   true  有登錄、而且有電梯出口
+   *   false 有登錄、但沒有電梯出口
+   *   null  TDX 沒有登錄 —— 我們不知道，畫面要寫「查無資料」
+   */
+  hasElevator: boolean | null
+  elevatorExits: Array<{
+    exitId: string
+    name: string
+    elevator: boolean | null
+    escalator: boolean | null
+    locationDescription: string | null
+  }>
+  exitCount: number
+}
+
+export type AccessibilityPoint = {
+  /** transfer = 轉乘站，exit = 出站的那一站 */
+  role: 'transfer' | 'exit'
+  station: string
+  stationId: string
+  /** null 代表查不到，不是「沒有電梯」 */
+  facility: StationFacility | null
+}
 
 export type RoutePlan = {
   from: string
@@ -40,6 +98,16 @@ export type RoutePlan = {
   /** 現在是不是尖峰 */
   peak: boolean
   service: MetroService
+  /** 公告票價。查不到就是 null，畫面就不顯示票價那一行。 */
+  fare: MetroFare | null
+  /*
+   * 收班／快收班時的叫車估價。其他時候是 null ——
+   * 每次查路線都附一個叫車價，就是在推銷。
+   * 依公告費率估算，不是 yoxi 報價，basis 要一起顯示。
+   */
+  rideFallback: RideEstimate | null
+  /** 只有帶 accessibility=1 查詢時才有值 */
+  accessibility: AccessibilityPoint[] | null
 }
 
 export type PlanState =
@@ -70,8 +138,19 @@ function fresh(key: string): RoutePlan | null {
   return hit.plan
 }
 
-export function useRoutePlan(from: string | null, to: string | null): PlanState {
-  const key = from && to ? `${from}\u2192${to}` : null
+export function useRoutePlan(
+  from: string | null,
+  to: string | null,
+  /*
+   * 要不要一起查轉乘站與出站口的電梯資訊。
+   *
+   * 預設關閉，由呼叫端依使用者的「優先顯示無障礙路線」偏好決定。
+   * 它也是快取鍵的一部分 —— 不然開啟偏好之後會拿到之前沒帶設施資料的結果，
+   * 畫面上那一段就永遠不會出現。
+   */
+  accessibility = false,
+): PlanState {
+  const key = from && to ? `${from}\u2192${to}${accessibility ? '\u2192a11y' : ''}` : null
 
   /*
    * 跟著「這批結果是哪一組起訖查來的」一起存。只存 plan 的話，
@@ -86,7 +165,10 @@ export function useRoutePlan(from: string | null, to: string | null): PlanState 
     if (fresh(key)) return
 
     let alive = true
-    fetch(`${API_URL}/transit/plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)
+    fetch(
+      `${API_URL}/transit/plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` +
+        (accessibility ? '&accessibility=1' : ''),
+    )
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
         return (await res.json()) as RoutePlan
@@ -103,7 +185,7 @@ export function useRoutePlan(from: string | null, to: string | null): PlanState 
     return () => {
       alive = false
     }
-  }, [key, from, to])
+  }, [key, from, to, accessibility])
 
   if (!key) return { status: 'idle' }
 

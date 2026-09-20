@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 
 import { startDemoRide } from '@/lib/ride'
+import { getUserRef } from '@/lib/userRef'
 
 /*
  * 原型導覽頁 —— 方便 demo 時直接跳到任一畫面。
- * 進度對照 Document/ROADMAP.md，正式版本應移除。
+ * 進度對照 Document/PlanMD/ROADMAP.md，正式版本應移除。
  */
 
 type Item = { to: string; label: string; file: string; needsRide?: boolean }
@@ -79,6 +80,7 @@ const total = groups.reduce((n, g) => n + g.items.length, 0)
 export function DevIndexScreen() {
   const navigate = useNavigate()
   const [preparing, setPreparing] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   /* 先開一趟示範行程再進去，不然那兩頁會判定沒有行程而跳回叫車頁 */
   const openWithRide = async (to: string) => {
@@ -96,6 +98,28 @@ export function DevIndexScreen() {
       <p className="mt-1 text-[13px] text-subtle">
         設計稿 {total} 張，全部已實作
       </p>
+
+      {/*
+        * 裝置識別碼。
+        *
+        * demo 前要跑 seed:notification 才有通知可看，而那支要帶這組 ref ——
+        * 沒有這一塊就得開 DevTools 去 localStorage 撈，那是多餘的摩擦。
+        */}
+      <div className="mt-3 rounded-xl border border-line/60 px-4 py-3">
+        <p className="text-[12px] font-semibold">這台裝置的 X-User-Ref</p>
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard?.writeText(getUserRef()).then(() => setCopied(true))}
+          className="mt-1 block w-full break-all text-left font-mono text-[11px] text-muted"
+        >
+          {getUserRef()}
+        </button>
+        <p className="mt-1.5 text-[11px] text-subtle">
+          {copied ? '已複製。' : '點一下複製。'}
+          種示範通知：
+          <span className="font-mono">npm --prefix apps/api run seed:notification -- &lt;ref&gt;</span>
+        </p>
+      </div>
 
       <div className="mt-3 rounded-xl bg-surface-2 px-4 py-3 text-[12px] leading-[1.7] text-muted">
         <p className="font-semibold text-ink">可走的流程</p>

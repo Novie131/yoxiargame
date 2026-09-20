@@ -11,10 +11,13 @@ import { PinIcon } from '@/components/icons'
 import {
   BUS_CITIES,
   metroLineOf,
+  ROUTE_LABEL_TEXT,
+  ROUTE_LABELS,
   save,
-  useCommuteRoute,
+  useCommuteRoutes,
   WEEKDAYS,
   type CommuteRoute,
+  type RouteLabel,
   type TransportMode,
 } from '@/lib/commute'
 import { createConversation } from '@/lib/conversation'
@@ -38,6 +41,17 @@ import { useStationSuggestions } from '@/lib/stations'
  * 表單多問了通知時段，因為主動通知需要它：不知道使用者幾點通勤，
  * 就只能在半夜也推「板南線有異常」。預設值是常見的上班族作息，
  * 使用者看得到也改得動，比在背後偷偷假設好。
+ *
+ * 另外多問了兩件事，各自解鎖一個功能：
+ *
+ *   這是哪一條（上班／回家）  兩條路線分開存。回程不是去程的反向 ——
+ *                            末班車分方向、尖峰離峰的班距完全不同。
+ *   幾點要到                  出發倒數的時間錨點。沒有它就只能從現在正推
+ *                            （「現在出發約 N 分鐘」），那是資訊不是提醒。
+ *
+ * 「幾點要到」刻意跟通知時段分開問，即使兩者都是時間：通知時段是
+ * 「什麼時候的異常要通知我」，抵達時間是「我幾點要到」。共用一個欄位的話，
+ * 改通知時段會默默改掉出發倒數，而使用者完全看不出因果。
  */
 
 const INTRO =
@@ -78,6 +92,19 @@ const DEFAULT_TIME_END = '21:00'
 
 /* 預設平日。週末不通勤的人佔多數，而且使用者一眼就看得出來要不要改。 */
 const DEFAULT_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri']
+
+/*
+ * 「幾點要到」的預設值。
+ *
+ * 上班那條抓 09:00、回家那條抓 19:00 —— 都是常見值，而且使用者一眼看得出來
+ * 要不要改。但**預設是不啟用的**（下面的 setArrival 初始為 false）：
+ * 一個沒人確認過的抵達時間會算出一個沒人確認過的倒數，而倒數估錯的代價
+ * 是使用者錯過會議。要他按一下才開始倒數，那一下就是確認。
+ */
+const DEFAULT_ARRIVE_BY: Record<RouteLabel, string> = {
+  commute: '09:00',
+  home: '19:00',
+}
 
 /* 站名輸入。捷運會給建議清單，公車沒有站表可對，就讓使用者自己打。 */
 function StationField({
@@ -138,7 +165,16 @@ function StationField({
   )
 }
 
-function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }) {
+function SetupForm({
+  initialLabel = 'commute',
+  onSaved,
+}: {
+  /** 從「也設定回家那條」進來時，直接停在那一條上 */
+  initialLabel?: RouteLabel
+  /* label 要一起回報 —— 剛存的是回家那條時，確認卡不能顯示上班那條 */
+  onSaved: (label: RouteLabel, transferRequired: boolean) => void
+}) {
+  const [label, setLabel] = useState<RouteLabel>(initialLabel)
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [mode, setMode] = useState<TransportMode>('metro')
@@ -147,6 +183,9 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
   const [limitTime, setLimitTime] = useState(true)
   const [timeStart, setTimeStart] = useState(DEFAULT_TIME_START)
   const [timeEnd, setTimeEnd] = useState(DEFAULT_TIME_END)
+  /* 預設不啟用，理由見 DEFAULT_ARRIVE_BY 的註解 */
+  const [setArrival, setSetArrival] = useState(false)
+  const [arriveBy, setArriveBy] = useState(DEFAULT_ARRIVE_BY[initialLabel])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -165,6 +204,7 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
     setError(null)
     try {
       const result = await save({
+        label,
         origin,
         destination,
         mode,
@@ -174,8 +214,10 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         usualDays: days.length === WEEKDAYS.length ? [] : days,
         usualTimeStart: limitTime ? timeStart : null,
         usualTimeEnd: limitTime ? timeEnd : null,
+        /* 沒勾就是 null —— 不要替使用者填一個他沒確認過的抵達時間 */
+        arriveBy: setArrival ? arriveBy : null,
       })
-      onSaved(result.transferRequired)
+      onSaved(result.route.label, result.transferRequired)
     } catch (e) {
       setError(e instanceof Error ? e.message : '儲存失敗，請稍後再試')
     } finally {
@@ -193,19 +235,54 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
         <h2 className="text-[15px] font-semibold">直接填寫</h2>
       </div>
 
+      {/*
+        * 哪一條。
+        *
+        * 只有兩個固定選項，不讓使用者自己命名 —— 自由命名會變成一個沒人填的
+        * 欄位，而兩條（上班／回家）已經解決 90% 的情況。更多就變成行程管理了，
+        * 那是另一個產品。
+        */}
+      <div className="mt-3">
+        <span className="text-[12px] text-subtle">這是哪一條</span>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          {ROUTE_LABELS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                setLabel(value)
+                /* 切換時把抵達時間的預設值一起換掉，免得回家那條預設 09:00 */
+                setArriveBy(DEFAULT_ARRIVE_BY[value])
+              }}
+              aria-pressed={label === value}
+              className={[
+                'rounded-xl py-2.5 text-[14px] font-semibold transition-colors',
+                label === value ? 'bg-primary text-white' : 'bg-surface-3 text-muted',
+              ].join(' ')}
+            >
+              {value === 'home' ? '🏠 ' : '💼 '}
+              {ROUTE_LABEL_TEXT[value].title}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] text-subtle">
+          兩條分開存，設定其中一條不會蓋掉另一條。
+        </p>
+      </div>
+
       <div className="mt-3 space-y-3">
         <StationField
-          label="出發站"
+          label={label === 'home' ? '出發站（公司）' : '出發站（住家）'}
           value={origin}
           onChange={setOrigin}
-          placeholder="例如：板橋"
+          placeholder={label === 'home' ? '例如：市政府' : '例如：板橋'}
           suggest={mode !== 'bus'}
         />
         <StationField
-          label="目的站"
+          label={label === 'home' ? '目的站（住家）' : '目的站（公司）'}
           value={destination}
           onChange={setDestination}
-          placeholder="例如：市政府"
+          placeholder={label === 'home' ? '例如：板橋' : '例如：市政府'}
           suggest={mode !== 'bus'}
         />
       </div>
@@ -266,6 +343,51 @@ function SetupForm({ onSaved }: { onSaved: (transferRequired: boolean) => void }
               ))}
             </div>
           </div>
+        )}
+      </div>
+
+      {/*
+        * 幾點要到。
+        *
+        * 這一格解鎖的是行程頁的出發倒數（「再 6 分鐘出門」）。沒有它就只能
+        * 從現在正推「現在出發約 N 分鐘」—— 一樣誠實，但使用者得自己在心裡
+        * 做減法，而他正在刷牙。
+        *
+        * 放在通知時段**之前**：它比通知時段更常被需要，而且兩者很容易被看成
+        * 同一件事，中間隔著一條分隔線會讓那個誤會更難發生。
+        */}
+      <div className="mt-4 border-t border-black/[.07] pt-3">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={setArrival}
+            onChange={(e) => setSetArrival(e.target.checked)}
+            className="h-4 w-4 accent-[var(--color-primary)]"
+          />
+          <span className="text-[13px] font-semibold">設定抵達時間</span>
+        </label>
+        <p className="mt-0.5 text-[12px] text-muted">
+          知道你幾點要到，行程頁才算得出「再幾分鐘該出門」。
+        </p>
+
+        {setArrival && (
+          <>
+            <input
+              type="time"
+              value={arriveBy}
+              onChange={(e) => setArriveBy(e.target.value)}
+              aria-label={label === 'home' ? '幾點要到家' : '幾點要到公司'}
+              className="mt-2 h-11 w-full rounded-xl bg-surface-3 px-3 text-[16px] outline-none"
+            />
+            {/*
+              * 倒數估太樂觀會讓人錯過會議，所以先講清楚它的不確定性 ——
+              * 等車是期望值，國定假日我們判斷不了。
+              */}
+            <p className="mt-1.5 text-[11px] text-subtle">
+              倒數含步行、轉乘與依班距估算的等車（期望值，不是保證），
+              並多抓 5 分鐘出門緩衝。國定假日與補班日的班距判斷不了，連假前後請自行多抓時間。
+            </p>
+          </>
         )}
       </div>
 
@@ -380,16 +502,19 @@ function SavedCard({
   route,
   transferRequired,
   onDone,
+  onAddOther,
 }: {
   route: CommuteRoute
   transferRequired: boolean
   onDone: () => void
+  /** 另一條還沒設定時才給。null = 兩條都有了，不要顯示一個沒事做的按鈕。 */
+  onAddOther: (() => void) | null
 }) {
   const line = metroLineOf(route)
 
   return (
     <TransportCard
-      chip="每日通勤"
+      chip={ROUTE_LABEL_TEXT[route.label].title}
       badge="已設定"
       badgeIcon={<span className="text-[12px]">⭐</span>}
       title={`${route.origin} → ${route.destination}`}
@@ -400,11 +525,33 @@ function SavedCard({
         <p className="text-[13px] text-muted">這兩站沒有直達路線，中途需要轉乘。</p>
       )}
       <p className="text-[13px] text-muted">通知時段：{describeWindow(route)}</p>
+      {/* 有設定抵達時間才講，沒有就不要暗示有倒數這件事 */}
+      {route.arriveBy && (
+        <p className="text-[13px] text-muted">
+          {route.arriveBy} 要到・行程頁會算「再幾分鐘該出門」
+        </p>
+      )}
       {/* 沒有可查的捷運路線名（公車、或推不出來）就只確認有記下來 */}
       {line ? (
         <TransitStatus line={line} />
       ) : (
         <p className="text-[13px] text-muted">已記下這條路線，之後有異常會通知您。</p>
+      )}
+
+      {/*
+        * 另一條的入口。
+        *
+        * 只設了上班那條的話，異常通知只保護早上那一趟 —— 而晚上才是叫車需求的
+        * 高峰、末班車問題唯一會發生的時段。所以這個提示值得佔一行。
+        */}
+      {onAddOther && (
+        <button
+          type="button"
+          onClick={onAddOther}
+          className="mt-1 w-full rounded-xl bg-surface-3 py-3 text-[14px] font-semibold text-muted transition-transform active:scale-[.99]"
+        >
+          {route.label === 'commute' ? '🏠 也設定回家那條' : '💼 也設定上班那條'}
+        </button>
       )}
     </TransportCard>
   )
@@ -413,8 +560,27 @@ function SavedCard({
 export function CommuteSetupScreen() {
   const navigate = useNavigate()
   const { messages, busy, error } = conversation.use()
-  const { route } = useCommuteRoute()
-  const [transferRequired, setTransferRequired] = useState(false)
+  const { routes } = useCommuteRoutes()
+  /*
+   * 這一頁有兩種狀態，由 editing 決定：
+   *   editing 有值   正在填某一條（新設、或從確認卡按「也設定另一條」進來）
+   *   editing 為 null 顯示確認卡（剛存好的那一條，或既有的那一條）
+   *
+   * 沒有任何路線時 editing 也會是 null，這時候 confirming 是 undefined，
+   * 下面就落到表單那一支 —— 不用再開一個狀態。
+   */
+  const [editing, setEditing] = useState<RouteLabel | null>(null)
+  const [saved, setSaved] = useState<{ label: RouteLabel; transferRequired: boolean } | null>(
+    null,
+  )
+
+  /* 剛存好的優先；沒存過就顯示上班那條，再沒有就回家那條 */
+  const confirming = editing
+    ? null
+    : ((saved && routes[saved.label]) ?? routes.commute ?? routes.home ?? null)
+
+  const missingLabel = ROUTE_LABELS.find((l) => !routes[l]) ?? null
+  const route = confirming
   const bottomRef = useRef<HTMLDivElement>(null)
 
   /* 有新訊息或剛存好路線就捲到底，讓確認卡進到視線裡 */
@@ -452,11 +618,19 @@ export function CommuteSetupScreen() {
         {route ? (
           <SavedCard
             route={route}
-            transferRequired={transferRequired}
+            /* 只有這一次剛存好的才講轉乘，讀既有路線時我們不知道 */
+            transferRequired={saved?.label === route.label ? saved.transferRequired : false}
             onDone={() => navigate('/trips')}
+            onAddOther={missingLabel ? () => setEditing(missingLabel) : null}
           />
         ) : (
-          <SetupForm onSaved={setTransferRequired} />
+          <SetupForm
+            initialLabel={editing ?? missingLabel ?? 'commute'}
+            onSaved={(label, transferRequired) => {
+              setSaved({ label, transferRequired })
+              setEditing(null)
+            }}
+          />
         )}
 
         <div ref={bottomRef} />

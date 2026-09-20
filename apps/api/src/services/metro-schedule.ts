@@ -52,6 +52,31 @@ export type ServiceState =
       firstTrain: string
       lastTrain: string
     }
+  /*
+   * 快要收班了。
+   *
+   * running 與 closed 之間原本是空的，所以末班車資料只在**使用者已經錯過之後**
+   * 才派得上用場 —— 沒有人會在 00:30 主動問「末班車還在嗎」，他會在 01:00
+   * 發現自己回不了家。這一段就是為了在還來得及的時候講。
+   */
+  | {
+      status: 'closing-soon'
+      /** 哪一站、哪條線、往哪個方向判定的 */
+      station: string
+      line: string
+      /** 往這個方向的終點站名。末班車分方向，不講方向的倒數是沒有意義的。 */
+      towards: string
+      /*
+       * 距離末班車還有幾分鐘。
+       *
+       * **這是末班車到站的時間，不含使用者走到車站要花的時間。**
+       * 呼叫端顯示時要講清楚是哪一種，不要讓人以為「還有 3 分鐘」是
+       * 「你還有 3 分鐘可以出門」。
+       */
+      minutesLeft: number
+      firstTrain: string
+      lastTrain: string
+    }
   /** 班表拿不到，或這一站在班表裡查無資料 —— 不要假裝知道 */
   | { status: 'unknown' }
 
@@ -130,6 +155,29 @@ function runsToday(serviceDay: MetroFirstLast['ServiceDay'], day: string): boole
 }
 
 /*
+ * 距離末班車幾分鐘以內算「快收班了」。
+ *
+ * 30 分鐘是「還走得到車站」的下限：市區走到最近的捷運站普遍是 5–15 分鐘
+ * （trip-options.ts 的 MAX_WALK_TO_STATION_METERS 抓 1.2 公里，約 20 分），
+ * 再加上買票、進站、走到月台。門檻設更短的話，提醒跳出來時人已經趕不上了，
+ * 那則提醒就只剩下讓人焦慮的功能。
+ *
+ * 設更長也不好：晚上九點就開始倒數，使用者會學會忽略它。
+ */
+const CLOSING_SOON_MINUTES = 30
+
+/*
+ * 從現在到某個時刻還有幾分鐘，跨午夜要往後算一天。
+ *
+ * 末班車常常是隔天凌晨（01:12），23:50 減下去會得到 -1358 分鐘。
+ * 直接相減的話「快收班了」會在最需要它的那一個小時整個失效。
+ */
+function minutesUntil(nowMinutes: number, target: number): number {
+  const diff = target - nowMinutes
+  return diff >= 0 ? diff : diff + 24 * 60
+}
+
+/*
  * 現在是否在營運時間內。
  *
  * 末班車常常是隔天凌晨（「01:12」），所以不能拿字串直接比大小 ——
@@ -171,11 +219,40 @@ async function serviceStateOf(leg: RouteLeg, now: TaipeiNow): Promise<ServiceSta
   )
   if (rows.length === 0) return { status: 'unknown' }
 
+  /*
+   * 還在營運的班次裡，末班車「最晚」的那一筆決定倒數。
+   *
+   * rows 已經用 runsToday 濾過，正常情況下同方向只會剩一筆；但資料重複或
+   * 行駛日定義重疊時會有多筆，這時候取最晚的那一班才對 —— 取最早的會在
+   * 還有車的時候跳出倒數，把使用者趕去叫一台他不需要的車。
+   */
+  let latestLeft: number | null = null
+  let latestRow: (typeof rows)[number] | null = null
+
   for (const row of rows) {
     const first = toMinutes(row.FirstTrainTime)
     const last = toMinutes(row.LastTrainTime)
     if (first === null || last === null) continue
-    if (withinService(nowMinutes, first, last)) return { status: 'running' }
+    if (!withinService(nowMinutes, first, last)) continue
+
+    const left = minutesUntil(nowMinutes, last)
+    if (latestLeft === null || left > latestLeft) {
+      latestLeft = left
+      latestRow = row
+    }
+  }
+
+  if (latestRow !== null && latestLeft !== null) {
+    if (latestLeft > CLOSING_SOON_MINUTES) return { status: 'running' }
+    return {
+      status: 'closing-soon',
+      station: latestRow.StationName.Zh_tw,
+      line: leg.line,
+      towards: latestRow.DestinationStationName.Zh_tw,
+      minutesLeft: latestLeft,
+      firstTrain: latestRow.FirstTrainTime,
+      lastTrain: latestRow.LastTrainTime,
+    }
   }
 
   /* 都不在營運時間內。挑第一筆來說明首末班車。 */

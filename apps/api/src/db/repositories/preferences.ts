@@ -13,9 +13,21 @@ export type Preferences = {
   interests: string[]
   /** 關掉就不會收到地點推薦。跟交通異常通知的開關分開。 */
   discoveryEnabled: boolean
+  /*
+   * 路線卡要不要顯示電梯與無障礙出口資訊。
+   *
+   * 預設關閉是刻意的：那段資訊對真正需要的人必須是顯眼的，
+   * 而到處都顯示就等於沒有顯示。開了之後查不到的站要照實說「查無資料」——
+   * 告訴一個坐輪椅的人某個出口有電梯而實際沒有，比不給資訊糟糕得多。
+   */
+  accessibilityPriority: boolean
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { interests: [], discoveryEnabled: true }
+export const DEFAULT_PREFERENCES: Preferences = {
+  interests: [],
+  discoveryEnabled: true,
+  accessibilityPriority: false,
+}
 
 async function upsertUserRef(
   client: import('pg').PoolClient,
@@ -37,8 +49,12 @@ export async function getPreferences(
   provider: string,
 ): Promise<Preferences> {
   return withTransaction(async (client) => {
-    const { rows } = await client.query<{ interests: string[]; discovery_enabled: boolean }>(
-      `SELECT p.interests, p.discovery_enabled
+    const { rows } = await client.query<{
+      interests: string[]
+      discovery_enabled: boolean
+      accessibility_priority: boolean
+    }>(
+      `SELECT p.interests, p.discovery_enabled, p.accessibility_priority
          FROM user_preferences p
          JOIN external_user_refs u ON u.id = p.user_ref_id
         WHERE u.provider = $1 AND u.external_ref = $2`,
@@ -48,7 +64,11 @@ export async function getPreferences(
     /* 沒設定過就是預設值，不要為了讀取而建立一列 */
     if (!row) return DEFAULT_PREFERENCES
 
-    return { interests: row.interests ?? [], discoveryEnabled: row.discovery_enabled }
+    return {
+      interests: row.interests ?? [],
+      discoveryEnabled: row.discovery_enabled,
+      accessibilityPriority: row.accessibility_priority,
+    }
   })
 }
 
@@ -60,18 +80,35 @@ export async function savePreferences(
   return withTransaction(async (client) => {
     const userRefId = await upsertUserRef(client, provider, externalUserRef)
 
-    const { rows } = await client.query<{ interests: string[]; discovery_enabled: boolean }>(
-      `INSERT INTO user_preferences (user_ref_id, interests, discovery_enabled)
-       VALUES ($1, COALESCE($2::text[], '{}'), COALESCE($3::boolean, true))
+    const { rows } = await client.query<{
+      interests: string[]
+      discovery_enabled: boolean
+      accessibility_priority: boolean
+    }>(
+      `INSERT INTO user_preferences
+         (user_ref_id, interests, discovery_enabled, accessibility_priority)
+       VALUES ($1, COALESCE($2::text[], '{}'), COALESCE($3::boolean, true),
+               COALESCE($4::boolean, false))
        ON CONFLICT (user_ref_id) DO UPDATE SET
          /* 只更新有給的欄位，沒給的保持原狀 */
          interests = COALESCE($2::text[], user_preferences.interests),
          discovery_enabled = COALESCE($3::boolean, user_preferences.discovery_enabled),
+         accessibility_priority =
+           COALESCE($4::boolean, user_preferences.accessibility_priority),
          updated_at = now()
-       RETURNING interests, discovery_enabled`,
-      [userRefId, input.interests ?? null, input.discoveryEnabled ?? null],
+       RETURNING interests, discovery_enabled, accessibility_priority`,
+      [
+        userRefId,
+        input.interests ?? null,
+        input.discoveryEnabled ?? null,
+        input.accessibilityPriority ?? null,
+      ],
     )
 
-    return { interests: rows[0].interests ?? [], discoveryEnabled: rows[0].discovery_enabled }
+    return {
+      interests: rows[0].interests ?? [],
+      discoveryEnabled: rows[0].discovery_enabled,
+      accessibilityPriority: rows[0].accessibility_priority,
+    }
   })
 }

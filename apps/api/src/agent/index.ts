@@ -165,6 +165,13 @@ export function streamAgentReply(
  * 之後若有別的工具需要，在這裡多一種事件即可，協定不用再動。
  */
 export type CommuteRouteEvent = {
+  /*
+   * 這是上班那條還是回家那條。
+   *
+   * 前端靠它決定要更新哪一條 —— 沒有 label 的話，使用者用講的設定回家路線，
+   * 畫面會把它蓋到上班那條上，而且看起來像設定成功了。
+   */
+  label: 'commute' | 'home'
   origin: string
   destination: string
   mode: TransportMode
@@ -172,6 +179,8 @@ export type CommuteRouteEvent = {
   usualDays: string[]
   usualTimeStart: string | null
   usualTimeEnd: string | null
+  /** 幾點要到目的地。沒設定就是 null，行程頁不顯示出發倒數。 */
+  arriveBy: string | null
 }
 
 export type RouteOption = {
@@ -182,8 +191,12 @@ export type RouteOption = {
   /** 依真實班距推導的期望等車（含轉乘等車）。班距拿不到時為 0。 */
   waitMinutes: number
   transfers: number
-  /** 這條路線的第一段此刻還有沒有車 */
-  service: 'running' | 'closed' | 'unknown'
+  /*
+   * 這條路線的第一段此刻還有沒有車。
+   * closing-soon = 還有車，但末班車就在 30 分鐘內 —— 卡片要講出來，
+   * 那是使用者最需要知道、又最不會主動問的一件事。
+   */
+  service: 'running' | 'closing-soon' | 'closed' | 'unknown'
   legs: Array<{ line: string; from: string; to: string; stops: number; minutes: number }>
 }
 
@@ -337,6 +350,8 @@ function toCommuteRouteEvent(output: unknown): CommuteRouteEvent | null {
     typeof value === 'string' && value.trim() ? value : null
 
   return {
+    /* 工具沒帶 label 時是上班那條 —— 跟後端 saveRoute 的預設一致 */
+    label: r.label === 'home' ? 'home' : 'commute',
     origin,
     destination,
     mode,
@@ -347,6 +362,7 @@ function toCommuteRouteEvent(output: unknown): CommuteRouteEvent | null {
       : [],
     usualTimeStart: text(r.usual_time_start),
     usualTimeEnd: text(r.usual_time_end),
+    arriveBy: text(r.arrive_by),
   }
 }
 

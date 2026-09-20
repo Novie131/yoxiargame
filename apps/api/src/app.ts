@@ -4,12 +4,25 @@ import { cors } from 'hono/cors'
 import { streamAgentReplyWithFallback, type ChatMessage } from './agent/index.ts'
 import { sanitizeMessages } from './agent/sanitize.ts'
 import { hasDatabase } from './db/client.ts'
-import type { TransportMode } from './db/repositories/commute.ts'
+import {
+  DEFAULT_ROUTE_LABEL,
+  isRouteLabel,
+  ROUTE_LABELS,
+  type RouteLabel,
+  type TransportMode,
+} from './db/repositories/commute.ts'
 import { findNearbyMissions } from './db/repositories/missions.ts'
 import { getPreferences, savePreferences } from './db/repositories/preferences.ts'
 import { listNotifications, markRead } from './db/repositories/notifications.ts'
 import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
-import { clearRoute, readRoute, saveRoute, setNotifications } from './services/commute.ts'
+import {
+  clearRoute,
+  readRoute,
+  readRoutes,
+  saveRoute,
+  setNotifications,
+} from './services/commute.ts'
+import { planDeparture } from './services/departure.ts'
 import { applySchedule } from './services/metro-schedule.ts'
 import { planMetroRoutes } from './services/route-planner.ts'
 import type { UserLocation } from './services/place.ts'
@@ -17,8 +30,11 @@ import { estimateRide } from './services/ride.ts'
 import { compareTripOptions } from './services/trip-options.ts'
 import { pollTransit } from './services/transit-watch.ts'
 import {
+  findStationPosition,
   getBusStatus,
+  getMetroFare,
   getMetroStatus,
+  getStationAccessibility,
   hasTdxCredentials,
   isBusCity,
   searchMetroStations,
@@ -180,7 +196,9 @@ app.get('/transit/stations', async (c) => {
  */
 app.get('/me/preferences', async (c) => {
   const userRef = readUserRef(c.req.header('X-User-Ref'))
-  if (!hasDatabase()) return c.json({ interests: [], discoveryEnabled: true })
+  if (!hasDatabase()) {
+    return c.json({ interests: [], discoveryEnabled: true, accessibilityPriority: false })
+  }
 
   try {
     const prefs = await getPreferences(userRef, USER_REF_PROVIDER)
@@ -202,9 +220,10 @@ app.put('/me/preferences', async (c) => {
     return c.json({ error: '請求內容不是合法的 JSON' }, 400)
   }
 
-  const { interests, discoveryEnabled } = (body ?? {}) as {
+  const { interests, discoveryEnabled, accessibilityPriority } = (body ?? {}) as {
     interests?: unknown
     discoveryEnabled?: unknown
+    accessibilityPriority?: unknown
   }
 
   if (interests !== undefined) {
@@ -217,6 +236,9 @@ app.put('/me/preferences', async (c) => {
   if (discoveryEnabled !== undefined && typeof discoveryEnabled !== 'boolean') {
     return c.json({ error: 'discoveryEnabled 必須是布林值' }, 400)
   }
+  if (accessibilityPriority !== undefined && typeof accessibilityPriority !== 'boolean') {
+    return c.json({ error: 'accessibilityPriority 必須是布林值' }, 400)
+  }
 
   /* 沒有資料庫時就是存不了，照實說而不是假裝成功 */
   if (!hasDatabase()) return c.json({ error: '偏好儲存未啟用' }, 503)
@@ -225,6 +247,7 @@ app.put('/me/preferences', async (c) => {
     const saved = await savePreferences(userRef, USER_REF_PROVIDER, {
       interests: interests as string[] | undefined,
       discoveryEnabled: discoveryEnabled as boolean | undefined,
+      accessibilityPriority: accessibilityPriority as boolean | undefined,
     })
     return c.json(saved)
   } catch (error) {
@@ -415,6 +438,80 @@ app.get('/transit/plan', async (c) => {
     )
 
     /*
+     * 票價。ODFare 是靜態資料且在 tdx.ts 壓成索引快取一天，
+     * 所以這支端點仍然不會因為多了票價而消耗 TDX 額度。
+     */
+    const first = best.legs[0]
+    const last = best.legs[best.legs.length - 1]
+    const fare =
+      first && last
+        ? await getMetroFare(first.fromStationId, last.toStationId).catch((error: unknown) => {
+            console.error('[transit/plan] 票價取得失敗：', error)
+            return null
+          })
+        : null
+
+    /*
+     * 收班與快收班時附上叫車估價。
+     *
+     * 這是「末班車倒數」真正的重點：單講「還有 22 分鐘」只是壞消息的預告，
+     * 使用者當下要做的決定是「趕不趕得上，趕不上要花多少錢」。
+     * 兩份資料都已經在手上，不放在一起講就等於沒講。
+     *
+     * 營運中的路線不算 —— 那會變成每一次查路線都推一次叫車。
+     */
+    /*
+     * 無障礙資訊只在呼叫端要的時候查。
+     *
+     * 預設不給是刻意的：這段資訊對需要的人必須是顯眼的，塞進每一次路線查詢
+     * 只會讓它變成背景雜訊。前端依使用者的 accessibilityPriority 偏好決定要不要帶。
+     *
+     * 查的是**轉乘站與出站口**，不是沿途每一站：中途不出站的站有沒有電梯
+     * 跟這趟無關，查了只是多幾筆資料要讀。
+     */
+    const wantsAccessibility = c.req.query('accessibility') === '1'
+    const accessibility = wantsAccessibility
+      ? await Promise.all(
+          /* 轉乘站 = 除了最後一段以外，每一段的終點 */
+          best.legs.map((leg, index) => ({
+            role: index === best.legs.length - 1 ? ('exit' as const) : ('transfer' as const),
+            station: leg.to,
+            stationId: leg.toStationId,
+          })),
+        ).then((points) =>
+          Promise.all(
+            points.map(async (point) => ({
+              ...point,
+              /*
+               * 查不到就是 null，呼叫端要照實說「查無資料」。
+               * 告訴一個坐輪椅的人某個出口有電梯而實際沒有，比不給資訊糟糕得多。
+               */
+              facility: await getStationAccessibility(point.stationId).catch(
+                (error: unknown) => {
+                  console.error('[transit/plan] 車站設施取得失敗：', error)
+                  return null
+                },
+              ),
+            })),
+          ),
+        )
+      : null
+
+    const needsFallback = best.service.status === 'closed' || best.service.status === 'closing-soon'
+    const rideFallback = needsFallback
+      ? await Promise.all([findStationPosition(best.from), findStationPosition(best.to)])
+          .then(([from, to]) =>
+            from && to
+              ? estimateRide({ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon }, now)
+              : null,
+          )
+          .catch((error: unknown) => {
+            console.error('[transit/plan] 叫車估價失敗：', error)
+            return null
+          })
+      : null
+
+    /*
      * 快取從一小時降到兩分鐘。
      *
      * 這支的回應現在跟時間有關了 —— 00:30 查到的「營運中」放到 01:30 就是錯的，
@@ -441,6 +538,12 @@ app.get('/transit/plan', async (c) => {
       legs: best.legs,
       peak: best.peak,
       service: best.service,
+      /* 查不到就是 null —— 捷運票價是分段計費的公告值，不要用距離推 */
+      fare,
+      /* 只有收班／快收班時才有值，理由見上面 */
+      rideFallback,
+      /* 只有帶 accessibility=1 時才有值；facility 為 null 代表查不到，不是沒有 */
+      accessibility,
       alternatives,
     })
   } catch (error) {
@@ -463,6 +566,7 @@ const MODES: TransportMode[] = ['metro', 'bus', 'mixed']
 const MAX_NAME_LENGTH = 60
 
 type ParsedRoute = {
+  label: RouteLabel
   origin: string
   destination: string
   mode: TransportMode
@@ -471,6 +575,18 @@ type ParsedRoute = {
   usualDays: string[]
   usualTimeStart: string | null
   usualTimeEnd: string | null
+  arriveBy: string | null
+}
+
+/*
+ * 路線的 label 從查詢參數讀，沒給就是上班那條。
+ *
+ * 值不合法時**不要**默默退回預設 —— 使用者以為自己在改回家那條，
+ * 結果改掉了上班那條，而畫面上完全看不出來。照實回 400。
+ */
+function parseLabel(value: string | undefined): RouteLabel | null {
+  if (value === undefined || value === '') return DEFAULT_ROUTE_LABEL
+  return isRouteLabel(value) ? value : null
 }
 
 /* 星期用小寫三字母，跟 Intl 的 weekday: 'short' 對齊，transit-watch 直接比對 */
@@ -515,7 +631,10 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
     return { ok: false, error: `mode 必須是 ${MODES.join('、')} 其中之一` }
   }
 
-  const { city, usualDays, usualTimeStart, usualTimeEnd } = body as Record<string, unknown>
+  const { city, usualDays, usualTimeStart, usualTimeEnd, arriveBy } = body as Record<
+    string,
+    unknown
+  >
 
   /* 公車的城市代碼要對得上 TDX，打錯的話之後查不到任何東西且不會有錯誤 */
   if (city !== undefined && city !== null && city !== '') {
@@ -542,9 +661,20 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
     return { ok: false, error: 'usualTimeStart 與 usualTimeEnd 必須成對提供' }
   }
 
+  /*
+   * 「幾點要到」是獨立的一個欄位，不跟通知時段成對 ——
+   * 兩者語意不同，理由見 008 migration 的註解。
+   */
+  const arrive = parseTime(arriveBy)
+  if (arrive === undefined) {
+    return { ok: false, error: 'arriveBy 格式必須是 HH:MM（24 小時制）' }
+  }
+
   return {
     ok: true,
     value: {
+      /* label 走查詢參數，這裡先填預設，由呼叫端覆寫 */
+      label: DEFAULT_ROUTE_LABEL,
       origin: origin.trim(),
       destination: destination.trim(),
       mode: mode as TransportMode,
@@ -554,18 +684,40 @@ function parseRouteBody(body: unknown): { ok: true; value: ParsedRoute } | { ok:
       usualDays: days,
       usualTimeStart: start,
       usualTimeEnd: end,
+      arriveBy: arrive,
     },
   }
 }
 
+/*
+ * 讀路線。
+ *
+ * 不帶 label 時回傳全部（上班那條在前），帶了就只回那一條。
+ * `route` 這個欄位保留著且永遠是上班那條 —— 既有的呼叫端不用改就能繼續用，
+ * 要顯示兩條的畫面讀 `routes`。
+ */
 app.get('/commute/route', async (c) => {
   const userRef = readUserRef(c.req.header('X-User-Ref'))
 
+  const requested = c.req.query('label')
+  if (requested !== undefined && !isRouteLabel(requested)) {
+    return c.json({ error: `label 必須是 ${ROUTE_LABELS.join('、')} 其中之一` }, 400)
+  }
+
   try {
-    const route = await readRoute(userRef)
     /* 每個使用者的資料都不一樣，不能讓中間層快取 */
     c.header('Cache-Control', 'private, no-store')
-    return c.json({ route })
+
+    if (requested) {
+      const route = await readRoute(userRef, requested)
+      return c.json({ route, routes: route ? [route] : [] })
+    }
+
+    const routes = await readRoutes(userRef)
+    return c.json({
+      route: routes.find((r) => r.label === DEFAULT_ROUTE_LABEL) ?? null,
+      routes,
+    })
   } catch (error) {
     console.error('[commute/route:get]', error)
     return c.json({ error: '讀取通勤路線失敗' }, 502)
@@ -582,11 +734,20 @@ app.post('/commute/route', async (c) => {
     return c.json({ error: '請求內容不是合法的 JSON' }, 400)
   }
 
+  const label = parseLabel(c.req.query('label'))
+  if (!label) {
+    return c.json({ error: `label 必須是 ${ROUTE_LABELS.join('、')} 其中之一` }, 400)
+  }
+
   const parsed = parseRouteBody(body)
   if (!parsed.ok) return c.json({ error: parsed.error }, 400)
 
   try {
-    const { route, transferRequired, persisted } = await saveRoute({ userRef, ...parsed.value })
+    const { route, transferRequired, persisted } = await saveRoute({
+      userRef,
+      ...parsed.value,
+      label,
+    })
     c.header('Cache-Control', 'private, no-store')
     return c.json({ route, transferRequired, persisted })
   } catch (error) {
@@ -609,13 +770,18 @@ app.patch('/commute/route', async (c) => {
     return c.json({ error: '請求內容不是合法的 JSON' }, 400)
   }
 
+  const label = parseLabel(c.req.query('label'))
+  if (!label) {
+    return c.json({ error: `label 必須是 ${ROUTE_LABELS.join('、')} 其中之一` }, 400)
+  }
+
   const { notificationEnabled } = (body ?? {}) as { notificationEnabled?: unknown }
   if (typeof notificationEnabled !== 'boolean') {
     return c.json({ error: 'notificationEnabled 必須是布林值' }, 400)
   }
 
   try {
-    const route = await setNotifications(userRef, notificationEnabled)
+    const route = await setNotifications(userRef, notificationEnabled, label)
     /* 還沒設定路線就沒有東西可以開關，照實回 404，不要假裝成功 */
     if (!route) return c.json({ error: '尚未設定通勤路線' }, 404)
 
@@ -630,12 +796,85 @@ app.patch('/commute/route', async (c) => {
 app.delete('/commute/route', async (c) => {
   const userRef = readUserRef(c.req.header('X-User-Ref'))
 
+  const label = parseLabel(c.req.query('label'))
+  if (!label) {
+    return c.json({ error: `label 必須是 ${ROUTE_LABELS.join('、')} 其中之一` }, 400)
+  }
+
   try {
-    await clearRoute(userRef)
+    await clearRoute(userRef, label)
     return c.body(null, 204)
   } catch (error) {
     console.error('[commute/route:delete]', error)
     return c.json({ error: '刪除通勤路線失敗' }, 502)
+  }
+})
+
+/*
+ * 出發倒數。
+ *
+ * 只有設定過「幾點要到」的路線才有東西可回 —— 沒有那個錨點就沒有倒數，
+ * 這時候回 departure: null，畫面退回「現在出發約 N 分鐘」。
+ * 那個退路本身是對的，不要為了讓這支端點有回應而編一個抵達時間。
+ */
+app.get('/commute/departure', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  const label = parseLabel(c.req.query('label'))
+  if (!label) {
+    return c.json({ error: `label 必須是 ${ROUTE_LABELS.join('、')} 其中之一` }, 400)
+  }
+
+  try {
+    const route = await readRoute(userRef, label)
+    /* 每個使用者不一樣，而且跟「現在幾點」有關，不能讓中間層快取 */
+    c.header('Cache-Control', 'private, no-store')
+
+    if (!route) return c.json({ error: '尚未設定這條路線' }, 404)
+    if (!route.arriveBy) return c.json({ route, departure: null })
+    /* 公車沒有路網圖可以規劃，倒數算不出來 —— 照實說，不要用捷運的數字頂替 */
+    if (route.mode === 'bus') return c.json({ route, departure: null })
+
+    const departure = await planDeparture({
+      origin: route.origin,
+      destination: route.destination,
+      arriveBy: route.arriveBy,
+    })
+    return c.json({ route, departure })
+  } catch (error) {
+    console.error('[commute/departure]', error)
+    return c.json({ error: '出發倒數暫時無法計算' }, 502)
+  }
+})
+
+/*
+ * 車站的無障礙資訊。
+ *
+ * hasElevator 是三態，呼叫端一定要分得出來：
+ *   true  有登錄、而且有電梯出口
+ *   false 有登錄、但沒有電梯出口
+ *   null  沒有登錄 —— 我們不知道
+ *
+ * 把 null 顯示成「沒有電梯」是這個功能最糟的失敗方式：
+ * 一個坐輪椅的人會因此繞去另一個站，而那一站可能更遠。
+ * 反過來把 null 講成「有電梯」更糟 —— 他會走過去，然後卡在那裡。
+ */
+app.get('/transit/station/accessibility', async (c) => {
+  const stationId = c.req.query('stationId')?.trim()
+  if (!stationId) return c.json({ error: '缺少 stationId 參數' }, 400)
+  if (!hasTdxCredentials()) return c.json({ error: 'TDX 金鑰未設定' }, 503)
+
+  try {
+    const accessibility = await getStationAccessibility(stationId)
+    if (!accessibility) {
+      return c.json({ error: `站表裡查不到「${stationId}」` }, 404)
+    }
+    /* 出口資料是靜態的，後端已經快取一天，用戶端也可以放心快取久一點 */
+    c.header('Cache-Control', 'public, max-age=86400')
+    return c.json(accessibility)
+  } catch (error) {
+    console.error('[transit/station/accessibility]', error)
+    return c.json({ error: '車站設施資料暫時無法取得' }, 502)
   }
 })
 

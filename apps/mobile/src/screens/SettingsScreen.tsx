@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { BellIcon, ChevronLeftIcon, PinIcon, ShieldIcon } from '@/components/icons'
-import { setNotificationEnabled, useCommuteRoute } from '@/lib/commute'
+import { setAccessibilityPriority, useAccessibilityPriority } from '@/lib/accessibility'
+import {
+  ROUTE_LABEL_TEXT,
+  setNotificationEnabled,
+  useCommuteRoutes,
+  type RouteLabel,
+} from '@/lib/commute'
 
 /*
  * 設定頁 —— 設計稿未提供，這是依現有設計系統做的提案版。
@@ -12,6 +18,13 @@ import { setNotificationEnabled, useCommuteRoute } from '@/lib/commute'
  *
  * 目前只有「通勤異常提醒」有對應的後端 —— 它寫的是 commute_routes.notification_enabled，
  * 而 services/transit-watch.ts 的輪詢就是用那個欄位過濾要不要發通知的，關掉是真的會停。
+ *
+ * 通勤異常提醒**分路線**：一個人可以有上班與回家兩條，各自開關。
+ * 合成一個總開關的話，想關掉早上那趟的人會連晚上的一起關掉 ——
+ * 而晚上那一段（末班車、叫車需求高峰）才是最不該漏掉通知的。
+ *
+ * 「優先顯示無障礙路線」也有真正的後端（user_preferences.accessibility_priority），
+ * 開了之後路線卡會顯示轉乘站與出站口的電梯資訊。
  *
  * 其餘三項（附近任務、天氣提醒、背景定位）對應的功能還不存在：
  * 任務通知要先有 missions 的地理圍欄，天氣提醒要先有天氣的監看，
@@ -98,24 +111,38 @@ function LinkRow({
 
 export function SettingsScreen() {
   const navigate = useNavigate()
-  const { route, configured } = useCommuteRoute()
+  const { routes, list, route, configured } = useCommuteRoutes()
+  const accessibility = useAccessibilityPriority()
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  /* 哪一個開關正在送出。整頁鎖住的話，兩條路線會互相擋。 */
+  const [busy, setBusy] = useState<string | null>(null)
 
-  /* 沒有路線就沒有東西可以開關 —— 通知本來就是綁在路線上的 */
-  const alertsOn = route?.notificationEnabled ?? false
+  const toggleAlerts = (label: RouteLabel) => {
+    const target = routes[label]
+    if (!target || busy) return
 
-  const toggleAlerts = () => {
-    if (!route || busy) return
-
-    setBusy(true)
+    setBusy(label)
     setError(null)
-    setNotificationEnabled(!alertsOn)
+    setNotificationEnabled(!target.notificationEnabled, label)
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : '更新失敗，請稍後再試')
       })
       .finally(() => {
-        setBusy(false)
+        setBusy(null)
+      })
+  }
+
+  const toggleAccessibility = () => {
+    if (busy) return
+
+    setBusy('accessibility')
+    setError(null)
+    setAccessibilityPriority(!accessibility)
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : '更新失敗，請稍後再試')
+      })
+      .finally(() => {
+        setBusy(null)
       })
   }
 
@@ -127,22 +154,34 @@ export function SettingsScreen() {
 
       <div className="px-4">
         <Section title="通知">
-          <div className="flex items-center gap-3 px-4 py-3.5">
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px]">通勤異常提醒</p>
-              <p className="mt-0.5 text-[12px] text-subtle">
-                {configured
-                  ? '捷運有事件通報時主動通知'
-                  : '先設定通勤路線才能開啟'}
-              </p>
+          {/* 還沒設定過任何路線時給一列說明，不要顯示一排撥不動的開關 */}
+          {!configured && (
+            <div className="flex items-center gap-3 px-4 py-3.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-[15px]">通勤異常提醒</p>
+                <p className="mt-0.5 text-[12px] text-subtle">先設定通勤路線才能開啟</p>
+              </div>
+              <Toggle on={false} onChange={() => {}} label="通勤異常提醒" disabled />
             </div>
-            <Toggle
-              on={alertsOn}
-              onChange={toggleAlerts}
-              label="通勤異常提醒"
-              disabled={!configured || busy}
-            />
-          </div>
+          )}
+
+          {/* 每條路線一個開關。合成總開關會讓人關掉他其實想留著的那一段。 */}
+          {list.map((r) => (
+            <div key={r.label} className="flex items-center gap-3 px-4 py-3.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-[15px]">{ROUTE_LABEL_TEXT[r.label].title}的異常提醒</p>
+                <p className="mt-0.5 truncate text-[12px] text-subtle">
+                  {r.origin} → {r.destination}・有事件通報時主動通知
+                </p>
+              </div>
+              <Toggle
+                on={r.notificationEnabled}
+                onChange={() => toggleAlerts(r.label)}
+                label={`${ROUTE_LABEL_TEXT[r.label].title}的異常提醒`}
+                disabled={busy !== null}
+              />
+            </div>
+          ))}
 
           {error && (
             <p className="px-4 py-2.5 text-[12px] text-primary" role="alert">
@@ -168,8 +207,8 @@ export function SettingsScreen() {
         <Section title="通勤">
           <LinkRow
             label="常用路線"
-            /* 這裡原本寫死「1 條」，不管使用者有沒有設定過 */
-            value={configured ? '1 條' : '尚未設定'}
+            /* 這裡原本寫死「1 條」，不管使用者有沒有設定過，也不管實際有幾條 */
+            value={configured ? `${list.length} 條` : '尚未設定'}
             Icon={PinIcon}
             onClick={() => navigate('/commute-setup')}
           />
@@ -179,6 +218,37 @@ export function SettingsScreen() {
             value={route ? `${route.delayThresholdMinutes} 分鐘` : '—'}
             Icon={BellIcon}
           />
+        </Section>
+
+        {/*
+          * 無障礙。
+          *
+          * 獨立一區而不是塞進「通勤」：它是關於「這個人」的偏好，
+          * 不是關於某一條路線的 —— 存在路線上的話，每設一條新路線就要再勾一次。
+          */}
+        <Section title="無障礙">
+          <div className="flex items-center gap-3 px-4 py-3.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-[15px]">優先顯示無障礙路線</p>
+              <p className="mt-0.5 text-[12px] text-subtle">
+                路線卡會顯示轉乘站與出站口的電梯資訊
+              </p>
+            </div>
+            <Toggle
+              on={accessibility}
+              onChange={toggleAccessibility}
+              label="優先顯示無障礙路線"
+              disabled={busy !== null}
+            />
+          </div>
+          {/*
+            * 資料的正確性代價在這裡特別高，所以先講清楚它的來源與限制：
+            * 告訴一個坐輪椅的人某個出口有電梯而實際沒有，比不給資訊糟糕得多。
+            */}
+          <p className="px-4 py-2.5 text-[12px] text-subtle">
+            資料來自 TDX 車站出入口。查無登錄時會顯示「查無資料」而不是「沒有電梯」，
+            請以現場標示為準。
+          </p>
         </Section>
 
         <Section title="關於">

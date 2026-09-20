@@ -555,6 +555,224 @@ export function getFrequency() {
 }
 
 /*
+ * 票價。
+ *
+ * 比較頁原本只講「捷運 20 分鐘 vs 叫車 12 分鐘」——「少 8 分鐘」是半句話，
+ * 另外半句是「要多付多少」。省 8 分鐘多付 40 元跟多付 225 元是完全不同的決定，
+ * 而我們只給了前半句。
+ *
+ * ODFare 是每一組起訖站的票價，靜態資料，TTL 跟路網圖一樣一天。
+ *
+ * ── 為什麼不直接快取整包 ──
+ * TRTC 有 130 多站，ODFare 是兩兩組合，回應是上萬列、好幾 MB。
+ * 那個大小放進 Workers 的記憶體快取（跟 Cache API）都很浪費，
+ * 而我們每次只需要查一組起訖。所以進來之後立刻壓成
+ * 「起訖 → 價格」的索引，原始陣列讓它被回收。
+ */
+type MetroODFare = {
+  OriginStationID: string
+  OriginStationName: { Zh_tw: string }
+  DestinationStationID: string
+  DestinationStationName: { Zh_tw: string }
+  Fares: Array<{
+    /** TDX 的票種代碼。TRTC 實測只出現 1（單程票）。 */
+    TicketType: number
+    /*
+     * 票別代碼。1 = 全票，3/4/5/7 是各種優待票
+     * （優待票還會帶 CitizenCode，因縣市而異）。
+     */
+    FareClass: number
+    Price: number
+  }>
+}
+
+/*
+ * 票種／票別代碼。
+ *
+ * 這兩組數字是 TDX 的列舉值，不是我們定的。只挑「全票」的單程票 ——
+ * 敬老票、愛心票、孩童票要知道使用者的身分才能講，我們沒有那個資訊，
+ * 拿其中一種當通用價會對一部分人講錯。
+ *
+ * ── 為什麼沒有悠遊卡票價 ──
+ * 實測 TRTC 的 ODFare 只出現 TicketType 1（單程票），沒有電子票證那一種。
+ * 悠遊卡實際上有折扣與常客回饋，但那個數字 TDX 沒有公告，我們也推不出來 ——
+ * 所以照實說這是單程票全票（見 FARE_BASIS），不要把它講成「捷運票價」。
+ */
+const FARE_CLASS_ADULT = 1
+const TICKET_TYPE_SINGLE = 1
+
+/*
+ * 這個價錢是哪一種票。要跟數字一起顯示 ——
+ * 跟 ride.ts 的 basis 同一個用意：少了它，使用者會以為那就是他會付的錢。
+ */
+export const FARE_BASIS = '單程票全票；悠遊卡另有折扣與常客回饋，TDX 未公告'
+
+export type MetroFare = {
+  /** 單程票全票（元） */
+  singleJourney: number
+  /** 原封不動顯示，見 FARE_BASIS */
+  basis: string
+}
+
+const fareKey = (from: string, to: string) => `${from}>${to}`
+
+let fareIndexCache: { at: number; value: Map<string, MetroFare> } | null = null
+let fareIndexInFlight: Promise<Map<string, MetroFare>> | null = null
+
+async function fareIndex(): Promise<Map<string, MetroFare>> {
+  if (fareIndexCache && Date.now() - fareIndexCache.at < LINE_TTL_MS) return fareIndexCache.value
+  if (fareIndexInFlight) return fareIndexInFlight
+
+  fareIndexInFlight = (async () => {
+    const rows = await get<MetroODFare[]>(
+      `v2/Rail/Metro/ODFare/${OPERATOR}?%24format=JSON`,
+      LINE_TTL_MS,
+    )
+
+    const index = new Map<string, MetroFare>()
+    for (const row of rows) {
+      const price = row.Fares?.find(
+        (f) => f.FareClass === FARE_CLASS_ADULT && f.TicketType === TICKET_TYPE_SINGLE,
+      )?.Price
+      /* 查不到全票就不建索引 —— 存一列空資料只會讓呼叫端誤以為查到了 */
+      if (typeof price !== 'number') continue
+
+      index.set(fareKey(row.OriginStationID, row.DestinationStationID), {
+        singleJourney: price,
+        basis: FARE_BASIS,
+      })
+    }
+
+    fareIndexCache = { at: Date.now(), value: index }
+    return index
+  })()
+
+  try {
+    return await fareIndexInFlight
+  } finally {
+    fareIndexInFlight = null
+  }
+}
+
+/**
+ * 一組起訖站的票價。查不到就回 null —— 不要用距離自己推一個，
+ * 捷運票價是分段計費的公告值，推出來的數字看起來很像真的，但會錯。
+ */
+export async function getMetroFare(
+  fromStationId: string,
+  toStationId: string,
+): Promise<MetroFare | null> {
+  const index = await fareIndex()
+  /* ODFare 兩個方向都有列，但資料不全時反查一次比回 null 好 */
+  return (
+    index.get(fareKey(fromStationId, toStationId)) ??
+    index.get(fareKey(toStationId, fromStationId)) ??
+    null
+  )
+}
+
+/*
+ * 出口與無障礙設施。
+ *
+ * 對推著嬰兒車、拉行李、坐輪椅的人來說，「哪個出口有電梯」比路線快兩分鐘
+ * 重要得多。主流地圖 App 在這塊都做得不好，而 TDX 的 StationExit 就有
+ * 每個出口的電梯／電扶梯／樓梯旗標。
+ *
+ * ── 這份資料的正確性代價特別高 ──
+ * 告訴一個坐輪椅的人「2 號出口有電梯」而實際沒有，比不給資訊糟糕得多：
+ * 他會走過去，然後卡在那裡。所以查不到一律回 null 由呼叫端照實說，
+ * 任何「這站應該有吧」的推測都不要寫進來。
+ */
+type MetroStationExit = {
+  StationID: string
+  StationName?: { Zh_tw: string }
+  ExitID: string
+  ExitName: { Zh_tw: string }
+  /*
+   * 實測（2026-09）的型別，三個欄位不一致，照抄不要「統一」：
+   *   Stair / Elevator  布林值 true / false
+   *   Escalator         數字（0 = 沒有，1 / 2 是方向代碼）
+   *
+   * 把 Elevator 當成 0/1 來比是會出事的：`true === 1` 是 false，
+   * 每一個出口都會被講成「沒有電梯」—— 而這正是這份資料最不該講反的方向。
+   *
+   * 三個都可能整個不存在（該站沒有登錄），所以都是選用的。
+   */
+  Stair?: boolean
+  Escalator?: number
+  Elevator?: boolean
+  LocationDescription?: string
+}
+
+function getStationExits() {
+  return get<MetroStationExit[]>(
+    `v2/Rail/Metro/StationExit/${OPERATOR}?%24format=JSON`,
+    LINE_TTL_MS,
+  )
+}
+
+export type StationExit = {
+  exitId: string
+  name: string
+  /** 有沒有電梯。TDX 沒有登錄這個欄位時是 null，不是 false。 */
+  elevator: boolean | null
+  escalator: boolean | null
+  locationDescription: string | null
+}
+
+export type StationAccessibility = {
+  stationId: string
+  /** 至少有一個出口有電梯。全部出口都沒登錄電梯欄位時為 null（不確定，不是沒有）。 */
+  hasElevator: boolean | null
+  /** 有電梯的出口，依出口編號排序。hasElevator 為 null 時是空陣列。 */
+  elevatorExits: StationExit[]
+  /** 這一站總共有幾個出口。0 代表站表裡查不到這一站。 */
+  exitCount: number
+}
+
+/*
+ * 三態解讀：欄位缺席與「值是否定的」意思不一樣。
+ *   缺席     → 沒有登錄，我們不知道
+ *   false／0 → 登錄過，這個出口沒有
+ * 混為一談的話，資料不全的站會被講成「沒有電梯」，那正是最不該講錯的方向。
+ */
+function boolFlag(value: boolean | undefined): boolean | null {
+  return value === undefined || value === null ? null : value
+}
+
+/** 電扶梯是數字（0 = 沒有，其餘是方向代碼），不是布林值 */
+function countFlag(value: number | undefined): boolean | null {
+  return value === undefined || value === null ? null : value > 0
+}
+
+/**
+ * 一站的無障礙資訊。站表查不到這一站時回 null。
+ */
+export async function getStationAccessibility(
+  stationId: string,
+): Promise<StationAccessibility | null> {
+  const rows = (await getStationExits()).filter((r) => r.StationID === stationId)
+  if (rows.length === 0) return null
+
+  const exits: StationExit[] = rows
+    .map((r) => ({
+      exitId: r.ExitID,
+      name: r.ExitName?.Zh_tw ?? r.ExitID,
+      elevator: boolFlag(r.Elevator),
+      escalator: countFlag(r.Escalator),
+      locationDescription: r.LocationDescription?.trim() || null,
+    }))
+    .sort((a, b) => a.exitId.localeCompare(b.exitId, 'zh-Hant', { numeric: true }))
+
+  const elevatorExits = exits.filter((e) => e.elevator === true)
+  /* 一個出口都沒登錄電梯欄位 = 不知道；有登錄但全是 0 = 真的沒有 */
+  const anyKnown = exits.some((e) => e.elevator !== null)
+  const hasElevator = elevatorExits.length > 0 ? true : anyKnown ? false : null
+
+  return { stationId, hasElevator, elevatorExits, exitCount: exits.length }
+}
+
+/*
  * 站點座標。
  *
  * 用來回答「離這個地點最近的捷運站是哪一個、要走多久」——

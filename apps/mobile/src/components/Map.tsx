@@ -20,7 +20,7 @@ import { STYLE_URL, TAIWAN_BOUNDS, type Coordinate } from '@/lib/map'
  * 共用地圖元件。
  *
  * 兩個地方要用：探索頁的活動地圖，以及叫車流程（目前那幾頁的地圖還是設計稿截圖，
- * 不能拖曳縮放，Document/ROADMAP.md 已經把它列為上架前的技術阻礙）。
+ * 不能拖曳縮放，Document/PlanMD/ROADMAP.md 已經把它列為上架前的技術阻礙）。
  * 所以從一開始就做成可重用的，不要在探索頁裡寫死一份。
  *
  * MapLibre 壓縮後有兩百多 KB，比目前整包 App 還大，所以用動態 import ——

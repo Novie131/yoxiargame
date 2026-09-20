@@ -2,11 +2,19 @@ import { useNavigate } from 'react-router'
 
 import { TransitStatusBadge } from '@/components/TransitStatus'
 import { BellIcon } from '@/components/icons'
-import { metroLineOf, useCommuteRoute, type CommuteRoute } from '@/lib/commute'
+import { useAccessibilityPriority } from '@/lib/accessibility'
+import {
+  metroLineOf,
+  ROUTE_LABEL_TEXT,
+  useCommuteRoutes,
+  type CommuteRoute,
+} from '@/lib/commute'
 import { formatDateWithWeekday, greeting, timeAfterMinutes } from '@/lib/datetime'
+import { useDeparture } from '@/lib/departure'
 import { useMember } from '@/lib/member'
 import { useNotifications } from '@/lib/notifications'
-import { useRoutePlan } from '@/lib/routePlan'
+import { formatFare } from '@/lib/ride'
+import { useRoutePlan, type AccessibilityPoint, type RoutePlan } from '@/lib/routePlan'
 import { removeTrip, useTrips, type PlannedTrip } from '@/lib/trips'
 import { useMetroStatus } from '@/lib/transit'
 
@@ -30,10 +38,15 @@ import { useMetroStatus } from '@/lib/transit'
  *
  *   今天的行程  一次性。使用者在對話裡規劃完、自己按了「加入今天行程」才會有。
  *               跨日就消失（lib/trips.ts）。
- *   常用路線    重複發生的通勤，一人一條，驅動異常通知。
+ *   常用路線    重複發生的通勤，最多兩條（上班／回家），驅動異常通知。
  *
  * 分開的理由是：一次性的規劃不該覆蓋掉他每天上班的那條路線 ——
  * 那是他早上唯一會看的東西。
+ *
+ * ── 為什麼要有回家那條 ──
+ * 只有上班那條的話，異常通知只保護早上那一趟。而晚上才是叫車需求的高峰、
+ * 末班車問題唯一會發生的時段、以及使用者最沒耐心查路線的時候 ——
+ * 等於我們保護了比較不需要保護的那一段。
  */
 
 const MODE_LABEL: Record<CommuteRoute['mode'], string> = {
@@ -65,22 +78,15 @@ function DarkStatusLine({ line }: { line: string }) {
 /*
  * 「現在出發的話幾點到」。
  *
- * 設計稿寫的是「建議 08:05 出發・預計 08:32 抵達」，但那需要知道使用者
- * 「幾點要到」才能反推出發時間，而我們沒有收集那個欄位。所以這裡改成
- * 從現在正推 —— 一樣有用，而且每個數字都有依據。
+ * 設計稿寫的是「建議 08:05 出發・預計 08:32 抵達」。那句話現在講得出來了 ——
+ * 通勤設定補上「幾點要到」之後（見 DepartureLine）。但沒設定的人仍然要有東西看，
+ * 所以這裡維持從現在正推的版本，一樣有用而且每個數字都有依據。
  *
  * 捷運收班時不講抵達時間，講末班與首班：那時候「預計 04:20 抵達」是假的。
  */
-function ArrivalLine({ route }: { route: CommuteRoute }) {
-  const plan = useRoutePlan(
-    route.mode === 'bus' ? null : route.origin,
-    route.mode === 'bus' ? null : route.destination,
-  )
-
-  if (plan.status !== 'ready') return null
-
-  if (plan.plan.service.status === 'closed') {
-    const { line, lastTrain, firstTrain } = plan.plan.service
+function ArrivalLine({ plan }: { plan: RoutePlan }) {
+  if (plan.service.status === 'closed') {
+    const { line, lastTrain, firstTrain } = plan.service
     return (
       <p className="mt-2 text-[13px] text-white/85">
         <span className="mr-1.5">🌙</span>
@@ -92,9 +98,103 @@ function ArrivalLine({ route }: { route: CommuteRoute }) {
   return (
     <p className="mt-2 text-[13px] text-white/85">
       <span className="mr-1.5">🕘</span>
-      現在出發約 {plan.plan.totalMinutes} 分鐘・預計 {timeAfterMinutes(plan.plan.totalMinutes)} 抵達
-      {plan.plan.peak && '（尖峰）'}
+      現在出發約 {plan.totalMinutes} 分鐘・預計 {timeAfterMinutes(plan.totalMinutes)} 抵達
+      {plan.peak && '（尖峰）'}
     </p>
+  )
+}
+
+/*
+ * 末班車倒數。
+ *
+ * 這是整個 App 裡最有價值的一句話，而它以前只在使用者**主動問**的時候才出現 ——
+ * 但沒有人會在 00:30 想到要問「末班車還在嗎」，他會在 01:00 發現自己回不了家。
+ * 所以開 App 就查、查到就講，不等他問。
+ *
+ * ── 兩件事一定要一起講 ──
+ * 「還有 22 分鐘」單獨出現只是壞消息的預告。真正的決定是「趕不趕得上，
+ * 趕不上要花多少錢」，所以叫車估價要在同一張卡上。
+ *
+ * ── 「還有 22 分鐘」是到站時間 ──
+ * 它不含走到車站的時間。不講清楚的話，使用者會把它當成「你還有 22 分鐘可以出門」，
+ * 然後慢慢走過去，然後撲空。
+ */
+function LastTrainCard({ plan }: { plan: RoutePlan }) {
+  if (plan.service.status !== 'closing-soon') return null
+
+  const { line, towards, minutesLeft, lastTrain } = plan.service
+  const ride = plan.rideFallback
+
+  return (
+    <div className="mt-3 rounded-2xl bg-white/10 px-4 py-3">
+      <p className="text-[14px] font-semibold text-white">
+        <span className="mr-1.5">🌙</span>
+        {line}往{towards}末班車還有 {minutesLeft} 分鐘
+      </p>
+      <p className="mt-1 text-[12px] text-white/70">
+        末班 {lastTrain} 到站，還沒算你走到車站的時間
+      </p>
+
+      {/*
+        * 叫車估價只在這裡出現，不是每次看行程都推 ——
+        * 它在這張卡上是選項，在別的地方就是推銷。
+        */}
+      {ride && (
+        <p className="mt-2 border-t border-white/15 pt-2 text-[12px] text-white/85">
+          <span className="mr-1.5">🚕</span>
+          錯過的話從{plan.from}叫車約 {formatFare(ride.fare)}・{ride.basis}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/*
+ * 出發倒數。
+ *
+ * 只有設定過「幾點要到」的路線才有 —— 沒有那個錨點就沒有倒數，
+ * 這時候整個元件不顯示，ArrivalLine 的「現在出發約 N 分鐘」接手。
+ * 猜一個上班時間的代價是使用者錯過會議，而他會以為那是我們算好的。
+ *
+ * confidence 為 low 時要**看得出來**降級了，不要照常倒數 ——
+ * 一個看起來一樣確定、實際上少算了等車的倒數，比不給更危險。
+ */
+function DepartureLine({ route }: { route: CommuteRoute }) {
+  /* 沒設定抵達時間、或公車路線（規劃不出來）就不查 */
+  const state = useDeparture(route.arriveBy && route.mode !== 'bus' ? route.label : null)
+  if (state.status !== 'ready' || !state.departure) return null
+
+  const d = state.departure
+  const overdue = d.minutesUntilDeparture <= 0
+  const low = d.confidence === 'low'
+
+  return (
+    <div className="mt-3 rounded-2xl bg-white/10 px-4 py-3">
+      <p className="text-[14px] font-semibold text-white">
+        <span className="mr-1.5">{overdue ? '🏃' : '⏳'}</span>
+        {overdue
+          ? `已經該出門了（建議 ${d.departBy} 出發）`
+          : `再 ${d.minutesUntilDeparture} 分鐘出門，${d.departBy} 出發`}
+      </p>
+      <p className="mt-1 text-[12px] text-white/70">
+        {d.arriveBy} 要到・門到門約 {d.totalMinutes} 分鐘
+        {d.waitMinutes > 0 && `（含等車 ${d.waitMinutes} 分）`}・含 {d.bufferMinutes} 分出門緩衝
+      </p>
+
+      {/* 已經來不及時才給叫車，而且照樣附上來源 */}
+      {overdue && d.rideFallback && (
+        <p className="mt-2 border-t border-white/15 pt-2 text-[12px] text-white/85">
+          <span className="mr-1.5">🚕</span>
+          現在叫車約 {formatFare(d.rideFallback.fare)}・{d.rideFallback.basis}
+        </p>
+      )}
+
+      {/* 降級與依據都要講。藏起來的話這個倒數就變成一個會讓人遲到的確定數字。 */}
+      {low && d.caveat && (
+        <p className="mt-2 text-[12px] text-amber-200">⚠️ {d.caveat}</p>
+      )}
+      <p className="mt-1 text-[11px] text-white/55">{d.basis}</p>
+    </div>
   )
 }
 
@@ -102,6 +202,10 @@ function ArrivalLine({ route }: { route: CommuteRoute }) {
 function NextLegCard({ route }: { route: CommuteRoute }) {
   const { displayName } = useMember()
   const line = metroLineOf(route)
+  const plan = useRoutePlan(
+    route.mode === 'bus' ? null : route.origin,
+    route.mode === 'bus' ? null : route.destination,
+  )
 
   return (
     <div className="rounded-2xl bg-ink px-5 py-4 text-white">
@@ -110,7 +214,7 @@ function NextLegCard({ route }: { route: CommuteRoute }) {
       </p>
       <h2 className="mt-1 text-[20px] font-bold">下一段：前往{route.destination}</h2>
 
-      <ArrivalLine route={route} />
+      {plan.status === 'ready' && <ArrivalLine plan={plan.plan} />}
 
       {line ? (
         <DarkStatusLine line={line} />
@@ -120,6 +224,9 @@ function NextLegCard({ route }: { route: CommuteRoute }) {
           {route.line ?? MODE_LABEL[route.mode]}・路況有異常時會通知您
         </p>
       )}
+
+      <DepartureLine route={route} />
+      {plan.status === 'ready' && <LastTrainCard plan={plan.plan} />}
     </div>
   )
 }
@@ -181,13 +288,64 @@ function EmptyRouteCard({ onSetup }: { onSetup: () => void }) {
   )
 }
 
+/*
+ * 轉乘站與出站口的電梯資訊。
+ *
+ * 只有開啟「優先顯示無障礙路線」才會出現，理由見 lib/accessibility.ts。
+ *
+ * ── 三態一定要分得出來 ──
+ *   有電梯    列出是哪幾個出口
+ *   沒有電梯  照實說沒有
+ *   查不到    寫「查無資料」，**不要**寫成「沒有電梯」
+ *
+ * 最後那一條是這個功能的重點。告訴一個坐輪椅的人某個出口有電梯而實際沒有，
+ * 比不給資訊糟糕得多 —— 他會走過去，然後卡在那裡。
+ * 反過來把「查不到」講成「沒有」，他會白繞去一個更遠的站。
+ */
+function AccessibilityLine({ points }: { points: AccessibilityPoint[] }) {
+  return (
+    <div className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5">
+      <p className="text-[12px] font-semibold text-subtle">♿️ 電梯與出口</p>
+      <ul className="mt-1.5 space-y-1">
+        {points.map((point) => {
+          const role = point.role === 'exit' ? '出站' : '轉乘'
+          const facility = point.facility
+
+          const detail =
+            facility === null || facility.hasElevator === null
+              ? '查無電梯資料'
+              : facility.hasElevator
+                ? `電梯出口：${facility.elevatorExits.map((e) => e.name).join('、')}`
+                : '這一站沒有登錄電梯出口'
+
+          return (
+            <li key={`${point.role}-${point.stationId}`} className="text-[12px] text-muted">
+              <span className="font-medium text-ink">
+                {role}・{point.station}
+              </span>
+              <span className="mx-1">—</span>
+              {detail}
+            </li>
+          )
+        })}
+      </ul>
+      {/* 資料來源要講。使用者得知道這不是我們自己走過確認的。 */}
+      <p className="mt-1.5 text-[11px] text-subtle">資料來自 TDX 車站出入口，查無資料時請以現場為準</p>
+    </div>
+  )
+}
+
 function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () => void }) {
   const line = metroLineOf(route)
+  const accessibility = useAccessibilityPriority()
   /* 公車路線查不到捷運路網，會回 unavailable，那就只顯示運具不顯示時間 */
   const plan = useRoutePlan(
     route.mode === 'bus' ? null : route.origin,
     route.mode === 'bus' ? null : route.destination,
+    accessibility,
   )
+
+  const labelText = ROUTE_LABEL_TEXT[route.label]
 
   /* 這個「約 N 分鐘」現在含依班距估算的等車，所以尖峰離峰看到的數字會不一樣 */
   const summary =
@@ -201,8 +359,8 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
     <div className="rounded-2xl bg-surface p-4 shadow-[0_2px_12px_rgba(22,32,55,.06)]">
       <div className="flex items-start justify-between">
         <div className="rounded-xl bg-success-tint px-3 py-1.5 text-center">
-          <span className="text-[15px]">💼</span>
-          <p className="text-[12px] font-semibold text-success">每日通勤</p>
+          <span className="text-[15px]">{route.label === 'home' ? '🏠' : '💼'}</span>
+          <p className="text-[12px] font-semibold text-success">{labelText.title}</p>
         </div>
         {/*
           * 設計稿的「⋯」。唯一有意義的去處是通勤設定，所以就直接接過去 ——
@@ -223,8 +381,13 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
       <div className="relative mt-4 space-y-4">
         {/* 兩站之間的連接線 */}
         <span className="absolute left-[4.5px] top-4 h-8 w-px bg-line" />
-        <RouteStop label="住家" station={route.origin} color="var(--color-ink)" />
-        <RouteStop label="公司" station={route.destination} color="var(--color-primary)" />
+        {/* 回家那條的起訖標籤是反過來的 —— 寫死「住家 → 公司」會讓它整張卡都在說謊 */}
+        <RouteStop label={labelText.from} station={route.origin} color="var(--color-ink)" />
+        <RouteStop
+          label={labelText.to}
+          station={route.destination}
+          color="var(--color-primary)"
+        />
       </div>
 
       <div className="mt-4 flex items-end justify-between border-t border-black/[.07] pt-3.5">
@@ -236,6 +399,18 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
         {/* 沒有可查的捷運路線名就不顯示狀態，理由見 metroLineOf */}
         {line ? <TransitStatusBadge line={line} /> : null}
       </div>
+
+      {/* 票價。查不到就整行不顯示，不要用距離推一個數字。 */}
+      {plan.status === 'ready' && plan.plan.fare && (
+        <p className="mt-2 text-[12px] text-muted">
+          <span className="mr-1.5">🎫</span>
+          NT${plan.plan.fare.singleJourney}・{plan.plan.fare.basis}
+        </p>
+      )}
+
+      {accessibility && plan.status === 'ready' && plan.plan.accessibility && (
+        <AccessibilityLine points={plan.plan.accessibility} />
+      )}
 
       <button
         type="button"
@@ -282,7 +457,8 @@ function TodayTripCard({ trip, onRemove }: { trip: PlannedTrip; onRemove: () => 
 
 export function TripsScreen() {
   const navigate = useNavigate()
-  const { route, configured } = useCommuteRoute()
+  /* list 已經是「上班那條在前」的順序，畫面不要自己再排一次 */
+  const { route, list, configured } = useCommuteRoutes()
   const { unreadCount } = useNotifications()
   const trips = useTrips()
   const setup = () => navigate('/commute-setup')
@@ -346,8 +522,34 @@ export function TripsScreen() {
           )}
         </div>
 
-        {route ? (
-          <FrequentRouteCard route={route} onEdit={setup} />
+        {list.length > 0 ? (
+          <div className="space-y-3">
+            {list.map((r) => (
+              <FrequentRouteCard key={r.label} route={r} onEdit={setup} />
+            ))}
+
+            {/*
+              * 只設了上班那條時，提示還可以設回家那條。
+              *
+              * 放在這裡而不是設定頁，是因為使用者不會為了找一個他不知道存在的
+              * 功能而進設定頁。而晚上那一段才是叫車需求與末班車問題的高峰。
+              */}
+            {!list.some((r) => r.label === 'home') && (
+              <button
+                type="button"
+                onClick={setup}
+                className="w-full rounded-2xl border border-dashed border-line bg-surface px-4 py-3.5 text-left"
+              >
+                <p className="text-[14px] font-semibold">
+                  <span className="mr-1.5">🏠</span>
+                  也設定回家那條？
+                </p>
+                <p className="mt-0.5 text-[12px] text-muted">
+                  回程的末班車時間與班距都跟去程不同，設定後晚上也會收到路況提醒。
+                </p>
+              </button>
+            )}
+          </div>
         ) : (
           <EmptyRouteCard onSetup={setup} />
         )}

@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { hasDatabase } from '../db/client.ts'
 import { findNearbyMissions } from '../db/repositories/missions.ts'
-import { readRoute, saveRoute } from '../services/commute.ts'
+import { readRoutes, saveRoute } from '../services/commute.ts'
 import {
   resolvePlaceName,
   resolveUserLocation,
@@ -266,8 +266,12 @@ export function createTools(userRef: string, location?: UserLocation | null) {
       [routes.best, ...routes.alternatives].map((r) => applySchedule(r, now)),
     )
 
-    /* 還有車的排前面 —— 收班的路線再快也搭不到 */
-    const rank = (status: string) => (status === 'running' ? 0 : status === 'unknown' ? 1 : 2)
+    /*
+     * 還有車的排前面 —— 收班的路線再快也搭不到。
+     * closing-soon 跟 running 同級：還搭得到，只是要快一點。
+     */
+    const rank = (status: string) =>
+      status === 'running' || status === 'closing-soon' ? 0 : status === 'unknown' ? 1 : 2
     scheduled.sort((a, b) => rank(a.service.status) - rank(b.service.status))
 
     return {
@@ -447,7 +451,18 @@ export function createTools(userRef: string, location?: UserLocation | null) {
                     first_train: first.service.firstTrain,
                     last_train: first.service.lastTrain,
                   }
-                : { status: first.service.status },
+                : first.service.status === 'closing-soon'
+                  ? {
+                      status: 'closing-soon',
+                      station: first.service.station,
+                      line: first.service.line,
+                      towards: first.service.towards,
+                      /* 末班車**到站**還有幾分鐘，不含走到車站的時間 */
+                      minutes_left: first.service.minutesLeft,
+                      last_train: first.service.lastTrain,
+                      first_train: first.service.firstTrain,
+                    }
+                  : { status: first.service.status },
             peak: first.peak,
             /* 第一條是建議路線，其餘是使用者可以自己選的替代方案 */
             routes: scheduled.map((r) => ({
@@ -469,7 +484,11 @@ export function createTools(userRef: string, location?: UserLocation | null) {
             note:
               (closed
                 ? '捷運目前不在營運時間內，下面的路線僅供參考，現在搭不到。'
-                : '時間含依班距估算的等車，是期望值不是保證；') +
+                : first.service.status === 'closing-soon'
+                  ? `這個方向的末班車只剩 ${first.service.minutesLeft} 分鐘（是末班車到站的時間，` +
+                    '不含走到車站的時間）。要主動講出來，並一起給叫車的估價讓他自己決定；' +
+                    '時間含依班距估算的等車，是期望值不是保證；'
+                  : '時間含依班距估算的等車，是期望值不是保證；') +
               '兩端步行時間由直線距離估算' +
               (origin.metroReachable && destination.metroReachable
                 ? ''
@@ -524,7 +543,10 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           const index = Math.min(Math.max((route_index ?? 1) - 1, 0), scheduled.length - 1)
           const chosen = scheduled[index]
 
-          /* 現在搭不到的東西放進今天的行程沒有意義 */
+          /*
+           * 現在搭不到的東西放進今天的行程沒有意義。
+           * closing-soon 不擋 —— 那班車還在，擋掉反而是幫使用者做決定。
+           */
           if (chosen.service.status === 'closed') {
             return {
               saved: false,
@@ -640,8 +662,19 @@ export function createTools(userRef: string, location?: UserLocation | null) {
     save_commute_route: tool({
       description:
         '儲存使用者的常用通勤路線，之後路線有異常時可主動通知。' +
-        '使用者描述自己每天怎麼上班（例如「我從板橋搭捷運到市政府」）時就呼叫。',
+        '使用者描述自己每天怎麼上班（例如「我從板橋搭捷運到市政府」）' +
+        '或怎麼回家（「我每天下班從市政府回板橋」）時就呼叫。',
       inputSchema: z.object({
+        label: z
+          .enum(['commute', 'home'])
+          .optional()
+          .describe(
+            '這是去程還是回程。commute = 上班（家 → 公司），home = 回家（公司 → 家）。' +
+              '使用者講「上班」「去公司」「早上」就是 commute；' +
+              '講「下班」「回家」「晚上」就是 home。' +
+              '判斷不出來就不要帶，會存成上班那條。' +
+              '兩條是分開存的，存回程不會蓋掉去程。',
+          ),
         origin: z.string().describe('出發地，例如「板橋站」'),
         destination: z.string().describe('目的地，例如「市政府站」'),
         mode: z.enum(['metro', 'bus', 'mixed']).describe('主要運具'),
@@ -671,8 +704,19 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           .string()
           .optional()
           .describe('通知時段的結束，HH:MM 24 小時制，例如 21:00。要跟開始成對出現。'),
+        arrive_by: z
+          .string()
+          .optional()
+          .describe(
+            '使用者幾點要到目的地，HH:MM 24 小時制，例如 09:00。' +
+              '使用者明講「我九點要到公司」「我上班時間是九點」才帶。' +
+              '**不要拿通知時段當這個值**，兩者意思完全不同：' +
+              '通知時段是「什麼時候的異常要通知我」，這個是「我幾點要到」。' +
+              '有了它才算得出「再幾分鐘該出門」，沒有就不要猜一個時間。',
+          ),
       }),
       execute: async ({
+        label,
         origin,
         destination,
         mode,
@@ -681,10 +725,12 @@ export function createTools(userRef: string, location?: UserLocation | null) {
         usual_days,
         usual_time_start,
         usual_time_end,
+        arrive_by,
       }) => {
         try {
           const { route, transferRequired, persisted } = await saveRoute({
             userRef,
+            label,
             origin,
             destination,
             mode,
@@ -694,12 +740,14 @@ export function createTools(userRef: string, location?: UserLocation | null) {
             /* 只給一邊沒有意義，兩邊都有才算指定了時段 */
             usualTimeStart: usual_time_start && usual_time_end ? usual_time_start : null,
             usualTimeEnd: usual_time_start && usual_time_end ? usual_time_end : null,
+            arriveBy: arrive_by ?? null,
           })
           return {
             saved: true,
             persisted,
             /* 這個 route 會被 agent/index.ts 轉成串流事件，讓前端即時更新畫面 */
             route: {
+              label: route.label,
               origin: route.origin,
               destination: route.destination,
               mode: route.mode,
@@ -708,6 +756,7 @@ export function createTools(userRef: string, location?: UserLocation | null) {
               usual_days: route.usualDays,
               usual_time_start: route.usualTimeStart,
               usual_time_end: route.usualTimeEnd,
+              arrive_by: route.arriveBy,
             },
             transfer_required: transferRequired,
             notification_enabled: route.notificationEnabled,
@@ -721,29 +770,41 @@ export function createTools(userRef: string, location?: UserLocation | null) {
 
     get_commute_route: tool({
       description:
-        '查詢使用者已儲存的通勤路線。使用者問「我的通勤路線是什麼」或要修改路線前先確認時使用。',
+        '查詢使用者已儲存的通勤路線。使用者問「我的通勤路線是什麼」' +
+        '或要修改路線前先確認時使用。' +
+        '一個人最多有兩條（上班 commute、回家 home），回傳的 routes 是全部。',
       inputSchema: z.object({}),
       execute: async () => {
         try {
-          const route = await readRoute(userRef)
-          return route
-            ? {
-                configured: true,
-                route: {
-                  origin: route.origin,
-                  destination: route.destination,
-                  mode: route.mode,
-                  line: route.line,
-                  city: route.city,
-                  usual_days: route.usualDays,
-                  usual_time_start: route.usualTimeStart,
-                  usual_time_end: route.usualTimeEnd,
-                },
-              }
-            : { configured: false, route: null }
+          const routes = await readRoutes(userRef)
+          const describe = (r: (typeof routes)[number]) => ({
+            label: r.label,
+            origin: r.origin,
+            destination: r.destination,
+            mode: r.mode,
+            line: r.line,
+            city: r.city,
+            usual_days: r.usualDays,
+            usual_time_start: r.usualTimeStart,
+            usual_time_end: r.usualTimeEnd,
+            arrive_by: r.arriveBy,
+          })
+
+          return {
+            configured: routes.length > 0,
+            routes: routes.map(describe),
+            /*
+             * 保留單數的 route 欄位（永遠是上班那條）。
+             * 模型看到兩個欄位講同一件事會困惑，但拿掉它會讓只有一條路線的
+             * 對話突然要多繞一層陣列 —— 兩害相權，留著並在描述裡講清楚。
+             */
+            route: routes.find((r) => r.label === 'commute')
+              ? describe(routes.find((r) => r.label === 'commute')!)
+              : null,
+          }
         } catch (error) {
           console.error('[get_commute_route]', error)
-          return { configured: false, route: null, error: '讀取通勤路線失敗' }
+          return { configured: false, routes: [], route: null, error: '讀取通勤路線失敗' }
         }
       },
     }),
