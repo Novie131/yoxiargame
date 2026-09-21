@@ -12,6 +12,7 @@
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy",
     "seed:missions": "node --env-file-if-exists=.env scripts/seed-missions.ts",
+    "seed:community-day": "node --env-file-if-exists=.env scripts/seed-community-day.ts",
     "seed:notification": "node --env-file-if-exists=.env scripts/seed-notification.ts"
   },
   "dependencies": {

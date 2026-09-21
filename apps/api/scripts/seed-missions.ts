@@ -1,5 +1,5 @@
 import { closeDb, hasDatabase, withTransaction } from '../src/db/client.ts'
-import { geocodeDistrict } from '../src/services/weather.ts'
+import { geocodePlace } from '../src/services/weather.ts'
 
 /*
  * 探索任務的種子資料。
@@ -98,7 +98,7 @@ async function main() {
 
     for (const place of group.places) {
       try {
-        const hit = await geocodeDistrict(place.name)
+        const hit = await geocodePlace(place.name)
         if (hit) {
           located.push({ name: place.name, tags: place.tags, lat: hit.lat, lon: hit.lon })
         } else {

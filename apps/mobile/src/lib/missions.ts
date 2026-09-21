@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { API_URL } from './api'
+import { userHeaders } from './userRef'
 
 /*
  * 附近的探索任務，資料來自後端的 /missions/nearby。
@@ -22,6 +23,13 @@ export type Mission = {
   distanceMeters: number
   /** 使用者已經在這個任務的圍欄範圍內 */
   inside: boolean
+  /*
+   * 這個人在這個任務上的進度。還沒碰過就是 null。
+   * 跟任務本身在同一個請求裡回來 —— 分兩次拿的話，地圖會先畫出一批
+   * 「未完成」的圖釘再變色，那個閃爍看起來像壞掉。
+   */
+  status: 'seen' | 'started' | 'completed' | null
+  completedAt: string | null
 }
 
 function isMission(value: unknown): value is Mission {
@@ -35,6 +43,48 @@ function isMission(value: unknown): value is Mission {
     /* 沒有標籤的任務會讓篩選判斷炸掉，寧可當成不合法直接丟掉 */
     Array.isArray(m.tags)
   )
+}
+
+/** 打卡的結果。ok 為 false 時 reason 說明為什麼，畫面要據此講不同的話。 */
+export type CheckInResult =
+  | {
+      ok: true
+      name: string
+      /** 這次之前就完成過了 —— 重送不該再慶祝一次，但也不是錯誤 */
+      alreadyCompleted: boolean
+      completedAt: string
+    }
+  | {
+      ok: false
+      /** not-found = 任務不存在；closed = 活動結束；outside = 不在範圍內 */
+      reason: 'not-found' | 'closed' | 'outside'
+      name?: string
+      /** outside 時的實際距離，這是使用者唯一能行動的資訊 */
+      distanceMeters?: number
+    }
+
+/**
+ * 打卡完成一個任務。
+ *
+ * 判定在伺服器做（用任務自己的圍欄半徑），前端這邊的 inside 只用來決定
+ * 按鈕亮不亮 —— 兩邊會不一致，例如使用者站在邊界上、或定位飄了幾公尺。
+ * 那時候以伺服器為準，把它的理由照實顯示出來。
+ */
+export async function checkInMission(
+  missionId: string,
+  origin: { lat: number; lon: number },
+): Promise<CheckInResult> {
+  const res = await fetch(`${API_URL}/missions/${missionId}/checkin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify({ lat: origin.lat, lon: origin.lon }),
+  })
+
+  const body = (await res.json().catch(() => null)) as CheckInResult | null
+  if (body && typeof body === 'object' && 'ok' in body) return body
+
+  /* 連格式都不對（502、代理商的錯誤頁）—— 當成不在範圍內會誤導，照實說不知道 */
+  throw new Error(`伺服器回應 ${res.status}`)
 }
 
 /*
@@ -86,7 +136,10 @@ export function useNearbyMissions(
     let alive = true
     const [la, lo, r] = key.split(',')
 
-    fetch(`${API_URL}/missions/nearby?lat=${la}&lon=${lo}&radius=${r}`)
+    /* 帶上使用者識別才拿得到 status（哪些已經完成） */
+    fetch(`${API_URL}/missions/nearby?lat=${la}&lon=${lo}&radius=${r}`, {
+      headers: userHeaders(),
+    })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
         return (await res.json()) as { missions?: unknown }

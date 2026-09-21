@@ -184,6 +184,25 @@ export function requestLocation(): Promise<UserLocation> {
 }
 
 /**
+ * 把持續定位（watchPosition）拿到的座標回報進這個 store。
+ *
+ * 需要它是因為地理圍欄的監看是**另一條** geolocation 訂閱：
+ * 沒有這個函式的話，App 裡會有兩份互相不知道的位置，
+ * 圍欄判定用新的、天氣與地圖用十分鐘前的那一份，兩邊會講出矛盾的話。
+ *
+ * 手動指定的地點優先級仍然最高 —— 使用者明講他在哪，不該被 GPS 蓋掉。
+ */
+export function reportGpsFix(lat: number, lon: number) {
+  if (state.location.source === 'manual') return
+
+  gpsAt = Date.now()
+  patch({
+    location: { lat, lon, precise: true, source: 'gps', label: null },
+    status: 'gps',
+  })
+}
+
+/**
  * 地名 → 座標，走後端的 /geocode。
  *
  * 不直接從瀏覽器打 Nominatim：它的使用條款要求可識別的 User-Agent 並限制頻率，

@@ -1,7 +1,8 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { CarIcon, MapPinIcon } from './icons'
-import { missionRelativeTo, type Mission } from '@/lib/missions'
+import { checkInMission, missionRelativeTo, type Mission } from '@/lib/missions'
 import { formatFare } from '@/lib/ride'
 import { useTripOptions, type TripAdvice, type TripOption } from '@/lib/tripOptions'
 
@@ -95,6 +96,46 @@ export function MissionSheet({
   const trip = useTripOptions(origin, { lat: mission.lat, lon: mission.lon })
 
   /*
+   * 打卡狀態。
+   *
+   * 初值取自任務本身（後端在 /missions/nearby 一起回的 status），
+   * 所以重新打開面板不會把已經完成的任務又顯示成未完成。
+   */
+  const [done, setDone] = useState(mission.status === 'completed')
+  const [checking, setChecking] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const checkIn = async () => {
+    if (!origin || checking || done) return
+
+    setChecking(true)
+    setProblem(null)
+    try {
+      const result = await checkInMission(mission.id, origin)
+      if (result.ok) {
+        setDone(true)
+        return
+      }
+      /*
+       * 伺服器說不行時，照它的理由講 —— 不要一律回「打卡失敗」。
+       * 前端的 inside 與伺服器可能不一致（站在邊界、定位飄了幾公尺），
+       * 那時候使用者需要知道的是還差幾公尺，不是一句籠統的失敗。
+       */
+      setProblem(
+        result.reason === 'outside'
+          ? `還差 ${result.distanceMeters ?? '?'} 公尺才進得了範圍`
+          : result.reason === 'closed'
+            ? '這個活動已經結束了'
+            : '找不到這個任務，它可能剛下架',
+      )
+    } catch {
+      setProblem('打卡暫時無法完成，請稍後再試')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  /*
    * 距離與「在不在範圍內」一律以使用者的真實位置為準，不能用 API 回的值 ——
    * 那是相對於地圖中心算的，從通知點進來時地圖就在任務上，會誤判成已抵達。
    */
@@ -139,9 +180,39 @@ export function MissionSheet({
         </div>
 
         {relative?.inside ? (
-          <p className="mt-4 rounded-2xl bg-success-tint px-4 py-3.5 text-[14px] text-success">
-            你已經在這個任務的範圍內，可以直接開始。
-          </p>
+          <div className="mt-4">
+            {/*
+              * 進到範圍內才給打卡 —— 這是整條價值鏈的最後一步：
+              * 發現任務 → 誠實比較怎麼去 → 到了 → 完成。
+              * 在範圍外就給按鈕的話，那顆按鈕唯一的功能是讓人按了失敗。
+              */}
+            {done ? (
+              <p className="rounded-2xl bg-success-tint px-4 py-3.5 text-[14px] font-semibold text-success">
+                ✓ 已完成這個任務
+              </p>
+            ) : (
+              <>
+                <p className="rounded-2xl bg-success-tint px-4 py-3.5 text-[14px] text-success">
+                  你已經在這個任務的範圍內，可以直接完成。
+                </p>
+                <button
+                  type="button"
+                  onClick={checkIn}
+                  disabled={checking}
+                  className="mt-2 w-full rounded-2xl bg-primary py-3.5 text-[16px] font-semibold text-white transition-transform active:scale-[.98] disabled:opacity-60"
+                >
+                  {checking ? '打卡中…' : '完成打卡'}
+                </button>
+              </>
+            )}
+
+            {/* 失敗的理由要照實講，使用者才知道下一步能做什麼 */}
+            {problem && (
+              <p className="mt-2 text-[13px] text-primary" role="alert">
+                {problem}
+              </p>
+            )}
+          </div>
         ) : (
           <div className="mt-4">
             <p className="text-[12px] text-subtle">怎麼去</p>

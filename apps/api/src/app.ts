@@ -12,6 +12,8 @@ import {
   type TransportMode,
 } from './db/repositories/commute.ts'
 import { findNearbyMissions } from './db/repositories/missions.ts'
+import { findActiveCommunityDay } from './db/repositories/communityDay.ts'
+import { checkInMission, listCompletedMissions } from './db/repositories/userMissions.ts'
 import { getPreferences, savePreferences } from './db/repositories/preferences.ts'
 import { listNotifications, markRead } from './db/repositories/notifications.ts'
 import { readUserRef, USER_REF_PROVIDER } from './identity.ts'
@@ -22,6 +24,7 @@ import {
   saveRoute,
   setNotifications,
 } from './services/commute.ts'
+import { planItinerary } from './services/community-day.ts'
 import { planDeparture } from './services/departure.ts'
 import { applySchedule } from './services/metro-schedule.ts'
 import { planMetroRoutes } from './services/route-planner.ts'
@@ -294,6 +297,8 @@ app.get('/missions/nearby', async (c) => {
   /* 沒有資料庫就是沒有任務，回空陣列而不是錯誤 —— 這是輔助內容，不該擋住畫面 */
   if (!hasDatabase()) return c.json({ missions: [] })
 
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
   try {
     const missions = await findNearbyMissions(
       lat,
@@ -301,13 +306,154 @@ app.get('/missions/nearby', async (c) => {
       Math.min(radius, MAX_MISSION_RADIUS_M),
       20,
       tags,
+      { provider: USER_REF_PROVIDER, externalRef: userRef },
     )
-    /* 任務內容不常變，但「我在不在圍欄裡」會隨位置變，所以不讓中間層快取 */
-    c.header('Cache-Control', 'private, max-age=60')
+    /*
+     * 任務內容不常變，但「我在不在圍欄裡」會隨位置變，而且現在還帶了
+     * 這個人的完成進度 —— 一律 private，不能讓中間層快取。
+     * 快取時間也縮短：打卡完成之後要馬上看得到狀態變了。
+     */
+    c.header('Cache-Control', 'private, max-age=15')
     return c.json({ missions })
   } catch (error) {
     console.error('[missions/nearby]', error)
     return c.json({ error: '任務資料暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 現在這附近有沒有進行中的社群日，以及一條跑得完的行程。
+ *
+ * Task.md 的「AR 遊戲行程設計」與「精準導流」就是這支：
+ * 把一場活動的多個冷門地點，排成一條有順序的路線，
+ * 並在每一段照實說用走的還是值得叫車。
+ *
+ * ── 「綠色共乘快線」的誠實範圍 ──
+ * 字面上的多人共乘媒合**做不到**：沒有登入、沒有即時位置、沒有使用者密度，
+ * 三個缺一不可而我們三個都沒有。所以這裡給的是一個人的最佳路線，
+ * 外加 participantsToday（今天多少人跑過這場）當熱度。
+ * 那個數字是真的，但它**不是**「附近有幾個人可以跟你共乘」。
+ *
+ * 沒有進行中的活動時回 day: null —— 那是常態，不是錯誤。
+ * 一年裡大部分日子都沒有社群日，這支端點絕大多數時候就是回 null。
+ */
+app.get('/campaigns/today', async (c) => {
+  const lat = Number(c.req.query('lat'))
+  const lon = Number(c.req.query('lon'))
+  const radius = Number(c.req.query('radius') ?? DEFAULT_MISSION_RADIUS_M)
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return c.json({ error: 'lat 與 lon 必須是數字' }, 400)
+  }
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return c.json({ error: 'lat 或 lon 超出合理範圍' }, 400)
+  }
+
+  /* 沒有資料庫就是沒有活動。這是輔助內容，不該擋住畫面 */
+  if (!hasDatabase()) return c.json({ day: null })
+
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  try {
+    const day = await findActiveCommunityDay(
+      lat,
+      lon,
+      Math.min(radius, MAX_MISSION_RADIUS_M),
+      { provider: USER_REF_PROVIDER, externalRef: userRef },
+    )
+
+    /* 回應含這個人完成了哪些，而且跟「現在幾點」有關，不能讓中間層快取 */
+    c.header('Cache-Control', 'private, no-store')
+    if (!day) return c.json({ day: null })
+
+    return c.json({ day: planItinerary(day, { lat, lon }) })
+  } catch (error) {
+    console.error('[campaigns/today]', error)
+    return c.json({ error: '活動資料暫時無法取得' }, 502)
+  }
+})
+
+/*
+ * 打卡完成一個任務。
+ *
+ * ── 判定在伺服器做 ──
+ * 前端已經算過「我在不在圍欄裡」（決定按鈕亮不亮），但那個判定不能當授權 ——
+ * 任何人都可以直接打這支 API 說自己完成了。所以拿他送來的座標
+ * 重新跟 PostGIS 對一次，用任務自己的 radius_meters。
+ *
+ * ── 但這不是防作弊 ──
+ * 座標是前端給的，改得掉。伺服器驗證擋住的是「人在家裡按完成」這種最基本的
+ * 情況，擋不住認真偽造 GPS 的人。所以任何地方都不要把打卡講成「已驗證」。
+ * 真正的防作弊要裝置簽章與軌跡合理性，那是另一個層級的工程。
+ */
+app.post('/missions/:id/checkin', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+  const missionId = c.req.param('id')
+
+  /* 明顯不是 uuid 就不要丟給資料庫 —— 那會是一個 22P02 例外而不是 404 */
+  if (!/^[0-9a-f-]{36}$/i.test(missionId)) {
+    return c.json({ error: '任務 id 格式不正確' }, 400)
+  }
+
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: '請求內容不是合法的 JSON' }, 400)
+  }
+
+  const { lat, lon } = (body ?? {}) as { lat?: unknown; lon?: unknown }
+  if (typeof lat !== 'number' || typeof lon !== 'number') {
+    return c.json({ error: '需要 lat 與 lon（數字）' }, 400)
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return c.json({ error: 'lat 與 lon 必須是有限的數字' }, 400)
+  }
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return c.json({ error: 'lat 或 lon 超出合理範圍' }, 400)
+  }
+
+  /* 沒有資料庫就記不住，照實說而不是假裝成功 —— 假裝的話他會以為完成了 */
+  if (!hasDatabase()) return c.json({ error: '任務進度儲存未啟用' }, 503)
+
+  try {
+    const result = await checkInMission(userRef, USER_REF_PROVIDER, missionId, lat, lon)
+    c.header('Cache-Control', 'private, no-store')
+
+    if (result.ok) return c.json(result)
+
+    /*
+     * 狀態碼分開，前端才能講出不同的話：
+     *   404 這個任務不存在
+     *   410 活動結束了 —— 他沒做錯，只是來晚了
+     *   422 人不在範圍內 —— 帶上還差幾公尺，這是他唯一能行動的資訊
+     */
+    const status = result.reason === 'not-found' ? 404 : result.reason === 'closed' ? 410 : 422
+    return c.json(result, status)
+  } catch (error) {
+    console.error('[missions/checkin]', error)
+    return c.json({ error: '打卡暫時無法完成' }, 502)
+  }
+})
+
+/*
+ * 這個人完成過的任務。給會員頁與成就用。
+ *
+ * 沒有資料庫時回空陣列而不是錯誤：那是「還沒完成任何任務」的合理呈現，
+ * 而且這是輔助內容，不該擋住整頁。
+ */
+app.get('/me/missions', async (c) => {
+  const userRef = readUserRef(c.req.header('X-User-Ref'))
+
+  if (!hasDatabase()) return c.json({ missions: [] })
+
+  try {
+    const missions = await listCompletedMissions(userRef, USER_REF_PROVIDER)
+    c.header('Cache-Control', 'private, no-store')
+    return c.json({ missions })
+  } catch (error) {
+    console.error('[me/missions]', error)
+    return c.json({ error: '任務紀錄暫時無法取得' }, 502)
   }
 })
 

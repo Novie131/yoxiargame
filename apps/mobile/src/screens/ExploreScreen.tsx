@@ -4,12 +4,16 @@ import { useSearchParams } from 'react-router'
 import eventGoFest from '@/assets/maps/event-gofest.png'
 import { HomeHeader } from '@/components/HomeHeader'
 import { Map } from '@/components/Map'
+import { CommunityDayCard } from '@/components/CommunityDayCard'
+import { GeofenceToast } from '@/components/GeofenceToast'
 import { MissionSheet } from '@/components/MissionSheet'
 import { MapPinIcon } from '@/components/icons'
 import { TaskProgress } from '@/components/TaskProgress'
 import { INTERESTS, toggleInterest, useInterests } from '@/lib/interests'
 import { FALLBACK_LABEL, useUserLocation } from '@/lib/location'
-import { useNearbyMissions } from '@/lib/missions'
+import { useCommunityDay } from '@/lib/communityDay'
+import { useGeofenceWatch } from '@/lib/geofence'
+import { useNearbyMissions, type Mission } from '@/lib/missions'
 import { CITIES } from '@/lib/map'
 
 /*
@@ -88,10 +92,80 @@ export function ExploreScreen() {
   )
 
   /*
+   * 社群日以**使用者的真實位置**查，不是地圖中心 ——
+   * 使用者把地圖拖到台中，不代表他人在台中，推一場他到不了的活動沒有意義。
+   * 沒有精確定位時就不查（hook 會回 day: null）。
+   */
+  const communityDay = useCommunityDay(
+    location.precise ? { lat: location.lat, lon: location.lon } : null,
+  )
+
+  /*
+   * 要監看圍欄的任務 = 地圖上附近的 + 社群日那場的全部。
+   *
+   * 兩邊都要：社群日的點可能超出地圖目前的搜尋半徑（實際案例：科教館 5.8 公里），
+   * 只看 missions 的話，使用者走到那裡不會觸發 —— 而那正是活動最需要它的時候。
+   * 用 id 去重，同一個任務在兩邊都出現時只留一份。
+   */
+  const watched = useMemo(() => {
+    /*
+     * 刻意不用 Map（全域的那個）—— 這個檔案有一個同名的地圖元件 import，
+     * `new Map()` 會被解析成那個元件而不是內建型別。用 Set 記 id 就夠了。
+     */
+    const seen = new Set(missions.map((m) => m.id))
+    const day = communityDay.status === 'ready' ? communityDay.day : null
+    const extra: Mission[] = []
+
+    for (const leg of day?.legs ?? []) {
+      if (seen.has(leg.mission.id)) continue
+      seen.add(leg.mission.id)
+      extra.push({
+        ...leg.mission,
+        campaign: day?.name ?? '',
+        /* 這兩欄圍欄判定用不到 —— 它自己用使用者的即時座標重算 */
+        distanceMeters: 0,
+        inside: false,
+        status: leg.mission.completed ? ('completed' as const) : null,
+        completedAt: null,
+      })
+    }
+    return [...missions, ...extra]
+  }, [missions, communityDay])
+
+  const geofence = useGeofenceWatch(watched)
+
+  /*
    * 一定要 memo。Map 的標記 effect 相依於這個陣列，每次 render 都給新陣列的話
    * 標記會被反覆刪掉重畫，畫面會閃。
    */
-  const selectedMission = missions.find((m) => m.id === selectedMissionId) ?? null
+  /*
+   * 社群日的行程會列出**整場活動**的點，其中有些超出地圖目前的搜尋半徑
+   * （實際案例：科教館離使用者 5.8 公里，而半徑是 5 公里）。
+   * 只從 missions 找的話，點那些站會完全沒反應 —— 按鈕看起來壞了。
+   * 所以找不到時退回用行程裡那一筆補成完整的 Mission。
+   */
+  const selectedMission =
+    missions.find((m) => m.id === selectedMissionId) ??
+    (() => {
+      /* 先收斂成一個變數，TypeScript 才跟得上 status 與 day 的關係 */
+      const day = communityDay.status === 'ready' ? communityDay.day : null
+      const leg = day?.legs.find((l) => l.mission.id === selectedMissionId)
+      if (!day || !leg) return null
+
+      return {
+        ...leg.mission,
+        campaign: day.name,
+        /*
+         * distanceMeters / inside 這裡填 0 / false 沒關係 ——
+         * MissionSheet 一律用 missionRelativeTo 以使用者的真實位置重算，
+         * 不信任這兩個欄位（那是相對於查詢座標算的，見 lib/missions 的註解）。
+         */
+        distanceMeters: 0,
+        inside: false,
+        status: leg.mission.completed ? ('completed' as const) : null,
+        completedAt: null,
+      }
+    })()
 
   /*
    * 網址換了就在 render 當下同步，不要用 effect ——
@@ -127,6 +201,16 @@ export function ExploreScreen() {
       style={{ background: 'linear-gradient(180deg, #FCEFEB 0%, #FCEFEB 55%, #F9F1EF 100%)' }}
     >
       <HomeHeader />
+
+      {/*
+        * 社群日排在興趣標籤**之前** —— 它是限時的，而標籤隨時都在。
+        * 沒有進行中的活動時整段不出現，不放「目前沒有活動」的空卡片。
+        */}
+      {communityDay.status === 'ready' && communityDay.day && (
+        <section className="px-4 pb-1">
+          <CommunityDayCard day={communityDay.day} onPick={setSelectedMissionId} />
+        </section>
+      )}
 
       <section className="px-5">
         <h2 className="text-[17px] font-bold">選擇你想探索的內容</h2>
@@ -281,6 +365,22 @@ export function ExploreScreen() {
           開始探索
         </button>
       </section>
+
+      {/*
+        * 走進圍欄的提示。面板打開時不顯示 —— 使用者已經在看那個任務了，
+        * 再蓋一層橫幅只是擋住打卡按鈕。
+        */}
+      {geofence.entered && !selectedMission && (
+        <GeofenceToast
+          entry={geofence.entered}
+          onOpen={() => {
+            const id = geofence.entered?.mission.id
+            if (id) setSelectedMissionId(id)
+            geofence.dismiss()
+          }}
+          onDismiss={geofence.dismiss}
+        />
+      )}
 
       {selectedMission && (
         <MissionSheet

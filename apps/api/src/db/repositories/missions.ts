@@ -24,6 +24,15 @@ export type NearbyMission = {
   distanceMeters: number
   /** 使用者是不是已經站在圍欄裡 —— 這就是「動態地理圍欄」的判定 */
   inside: boolean
+  /*
+   * 這個人在這個任務上的進度。沒帶使用者查詢、或他還沒碰過這個任務時是 null。
+   *
+   * 跟在同一個查詢裡回來（LEFT JOIN），不另外開一支 API ——
+   * 分兩次拿的話，地圖上會先畫出一批全部「未完成」的圖釘，
+   * 第二個請求回來才變色，而那個閃爍看起來像壞掉。
+   */
+  status: 'seen' | 'started' | 'completed' | null
+  completedAt: string | null
   startsAt: string | null
   endsAt: string | null
 }
@@ -50,6 +59,11 @@ export async function findNearbyMissions(
    * 對話裡問「附近有什麼咖啡廳」時才需要真的過濾。
    */
   tags?: string[],
+  /*
+   * 要一起帶回進度時給。沒給就全部是 null ——
+   * 探索地圖在沒有識別的情況下仍然要看得到任務，進度只是加分項。
+   */
+  user?: { provider: string; externalRef: string },
 ): Promise<NearbyMission[]> {
   return withTransaction(async (client) => {
     const { rows } = await client.query<{
@@ -62,6 +76,8 @@ export async function findNearbyMissions(
       tags: string[] | null
       distance_m: number
       inside: boolean
+      status: string | null
+      completed_at: Date | null
       starts_at: Date | null
       ends_at: Date | null
     }>(
@@ -74,10 +90,21 @@ export async function findNearbyMissions(
               m.tags,
               ST_Distance(m.location, $1::geography) AS distance_m,
               ST_DWithin(m.location, $1::geography, m.radius_meters) AS inside,
+              um.status,
+              um.completed_at,
               m.starts_at,
               m.ends_at
          FROM missions m
          JOIN campaigns c ON c.id = m.campaign_id
+         /*
+          * 進度是 LEFT JOIN：沒做過的任務照樣要出現在地圖上。
+          * 用 INNER JOIN 的話地圖會只剩下他已經碰過的那幾個。
+          * 沒帶使用者時 $5/$6 是 NULL，整個 join 條件不成立，status 全是 null。
+          */
+         LEFT JOIN external_user_refs u
+                ON u.provider = $5 AND u.external_ref = $6
+         LEFT JOIN user_missions um
+                ON um.mission_id = m.id AND um.user_ref_id = u.id
         WHERE ST_DWithin(m.location, $1::geography, $2)
           AND c.status = 'active'
           AND (m.starts_at IS NULL OR m.starts_at <= now())
@@ -90,6 +117,8 @@ export async function findNearbyMissions(
         radiusMeters,
         Math.min(limit, MAX_RESULTS),
         tags?.length ? tags : null,
+        user?.provider ?? null,
+        user?.externalRef ?? null,
       ],
     )
 
@@ -103,6 +132,12 @@ export async function findNearbyMissions(
       tags: r.tags ?? [],
       distanceMeters: Math.round(Number(r.distance_m)),
       inside: r.inside,
+      /* CHECK 約束保證只會是這三個值，但資料是從資料庫來的，還是收斂一次 */
+      status:
+        r.status === 'seen' || r.status === 'started' || r.status === 'completed'
+          ? r.status
+          : null,
+      completedAt: r.completed_at?.toISOString() ?? null,
       startsAt: r.starts_at?.toISOString() ?? null,
       endsAt: r.ends_at?.toISOString() ?? null,
     }))
