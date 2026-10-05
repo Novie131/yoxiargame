@@ -1,248 +1,203 @@
 # yoxi ar game
 
-位置型任務遊戲 + 通勤助理 + 叫車的整合行動應用原型。
+結合位置型任務遊戲、通勤助理與叫車的手機 App 原型。
 
-## 技術選型
+- 探索：地圖上有任務點，走到附近就能解任務
+- 通勤助理：用聊天的方式問「從西門町到台北車站怎麼走」，會用真實的捷運資料規劃路線，並附上天氣與帶傘建議
+- 叫車：估算計程車車資並走完叫車流程（目前司機與派車是模擬的）
 
-| 層 | 選擇 | 理由 |
-|---|---|---|
-| App 殼 | Capacitor 8 | iOS + Android 一份程式碼；原生能力用 Swift/Kotlin plugin 補 |
-| 前端 | Vite 8 + React 19 + TypeScript + Tailwind 4 | 刻設計稿最快 |
-| 路由 | React Router 8 | |
-| 後端 | Hono + Node 24（原生跑 TypeScript，免 build） | |
-| LLM | Vercel AI SDK v7，provider 可切換 | NVIDIA NIM / Anthropic 一行切換 |
-| 資料庫 | PostgreSQL + PostGIS + Redis | 任務用地理圍欄，需要 GiST 索引 |
+目前還是原型，尚未上架。
 
 ## 目錄
 
-```
-apps/mobile        Capacitor + React 前端
-apps/api           Hono 後端與 Agent
-infra/             Postgres（含 PostGIS）與 Redis 的 compose 設定
-Document/          Figma 設計稿截圖與索引（見 Document/README.md）
-```
+1. [需要的工具](#1-需要的工具)
+2. [下載專案](#2-下載專案)
+3. [只跑前端畫面](#3-只跑前端畫面)
+4. [完整執行（後端、資料庫、AI 聊天）](#4-完整執行後端資料庫ai-聊天)
+5. [常見問題](#5-常見問題)
+6. [金鑰不要上傳](#6-金鑰不要上傳)
+7. [其他文件](#7-其他文件)
 
-## 開發
+## 1. 需要的工具
+
+| 工具 | 用途 | 確認方式 | 下載 |
+|---|---|---|---|
+| Node.js 24 以上 | 執行程式（必裝） | 終端機輸入 `node -v`，顯示 `v24.x.x` 或更高 | [nodejs.org](https://nodejs.org/)（選 LTS 版） |
+| Git | 下載專案（必裝） | 輸入 `git --version` 有顯示版本號 | [git-scm.com](https://git-scm.com/) |
+| Docker Desktop | 跑資料庫（只有完整執行需要） | 打開 Docker Desktop，確認它在執行中 | [docker.com](https://www.docker.com/products/docker-desktop/) |
+
+終端機的開法：
+
+- Mac：按 `Command + 空白鍵`，輸入「終端機」或「Terminal」
+- Windows：建議用安裝 Git 時附帶的 Git Bash，或使用 WSL
+
+以下程式碼框裡的指令，都是貼到終端機後按 Enter 執行。
+
+## 2. 下載專案
 
 ```bash
-# 前端 :5173
-npm run dev
-
-# 後端 :3000（需先建立 apps/api/.env）
-npm run dev:api
-
-# 資料庫
-npm run db:up
-
-# 檢查
-npm run typecheck
-npm run lint
+git clone https://github.com/Novie131/yoxiargame.git
+cd yoxiargame
 ```
 
-`/dev` 路由是原型導覽頁，可直接跳到任一畫面。
+之後的指令都要在 `yoxiargame` 資料夾裡執行。
 
-## 環境變數
+## 3. 只跑前端畫面
+
+不需要 Docker，也不用申請金鑰，適合先看看畫面。
+
+安裝前端套件（第一次才需要，約一兩分鐘）：
+
+```bash
+npm install --prefix apps/mobile
+```
+
+啟動：
+
+```bash
+npm run dev
+```
+
+看到 `Local: http://localhost:5173/` 之後，用瀏覽器打開 http://localhost:5173/dev 。這是導覽頁，可以直接點進每個畫面。用 Chrome 的話，按 `F12` 再點左上角的手機圖示，可以切成手機尺寸。
+
+這個模式沒有後端，聊天、路線規劃、任務點等需要資料的地方會是空的或顯示錯誤，屬於正常現象。
+
+要停止就在終端機按 `Ctrl + C`。
+
+## 4. 完整執行（後端、資料庫、AI 聊天）
+
+### 4.1 安裝套件
+
+```bash
+npm install --prefix apps/mobile
+npm install --prefix apps/api
+```
+
+### 4.2 建立設定檔
 
 ```bash
 cp apps/api/.env.example apps/api/.env
 ```
 
-`.env` 已被 git 忽略。`NVIDIA_MODEL` 沒有預設值，需到 build.nvidia.com 取得目前可用的 model id。
+用任何文字編輯器打開 `apps/api/.env`，填入下面幾個欄位：
 
-## 出真機 app
+| 欄位 | 用途 | 申請方式 | 沒填的影響 |
+|---|---|---|---|
+| `NVIDIA_API_KEY` | AI 聊天助理 | 到 [build.nvidia.com](https://build.nvidia.com/) 註冊取得，格式為 `nvapi-...` | 聊天無法使用 |
+| `NVIDIA_MODEL` | 指定 AI 模型 | 可先填 `nvidia/nemotron-3-super-120b-a12b` | 聊天無法使用 |
+| `TDX_CLIENT_ID`<br>`TDX_CLIENT_SECRET` | 捷運、公車即時資料 | 到 [tdx.transportdata.tw](https://tdx.transportdata.tw/) 註冊 → 會員中心 → API 金鑰管理 | 路線規劃與交通狀態沒有資料 |
 
-```bash
-npm run ios       # 需要 xcode-select 指向 Xcode.app
-npm run android   # 需要 JDK（裝 Android Studio 會一起帶）
+填好後的樣子（以下為假資料）：
+
+```
+NVIDIA_API_KEY=nvapi-你的金鑰
+NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b
+TDX_CLIENT_ID=你的-client-id
+TDX_CLIENT_SECRET=你的-client-secret
 ```
 
-Capacitor 8 使用 Swift Package Manager，不需要 CocoaPods。
-`apps/mobile/ios` 與 `apps/mobile/android` 不進版控，可用 `npx cap add` 重建；
-若之後要寫自訂原生程式碼，需把 `.gitignore` 裡那兩行拿掉。
+其他欄位保持預設值即可。
 
-## Demo 怎麼跑
+不想申請 NVIDIA 金鑰的話，也可以用本機的模型（例如 [Ollama](https://ollama.com/)）：把 `LLM_PROVIDER=nvidia` 改成 `LLM_PROVIDER=local`，再把 `LOCAL_MODEL=` 填上在 Ollama 下載的模型名稱。
+
+### 4.3 啟動
+
+先確認 Docker Desktop 已經開啟，然後執行：
 
 ```bash
-npm run db:up                                   # Postgres + Redis
-npm --prefix apps/api run migrate               # 套用 migration
-npm --prefix apps/api run seed:missions         # 探索頁的任務資料
-npm --prefix apps/api run seed:notification     # 一則示範的通勤異常通知（選用）
-npm run dev:api                                 # 後端 :3000
-npm run dev                                     # 前端 :5173
+npm run dev:all
 ```
 
-`/dev` 是原型導覽頁，可直接跳到任一畫面。
+這個指令會依序啟動資料庫、建立資料表、啟動後端與前端。第一次需要下載並建置資料庫，會比較久，看到「全部啟動」就完成了。
 
-叫車流程有四個入口，都進同一條路：探索頁任務的「叫車前往」、對話問車資後的估價卡、
-通知收件匣的「改叫計程車」、下雨情境的「立即叫車」。
+### 4.4 匯入示範資料（第一次需要）
 
-`seed:notification` 要帶裝置的 `X-User-Ref`（前端 localStorage 的 `yoxi.userRef`），
-不給就寫給 `dev-user`。清除：`DELETE FROM notifications WHERE provider = 'demo-seed';`
+另外開一個終端機視窗（原本的保持執行），回到專案資料夾後執行：
 
-## 目前狀態
+```bash
+npm --prefix apps/api run seed:missions        # 探索頁的任務點
+npm --prefix apps/api run seed:notification    # 一則示範用的通勤異常通知（可略過）
+```
 
-設計稿 11 個畫面已實作完成。天氣、捷運路徑規劃、捷運與公車即時狀態、地圖圖磚
-（MapLibre + OpenStreetMap）都已接真實來源。設定頁與會員頁有提案版（設計稿未提供）。
-詳細進度與待辦見 `Document/PlanMD/ROADMAP.md`，提案中的功能見 `Document/PlanMD/FEATURES.md`，設計稿索引見 `Document/README.md`。
+### 4.5 開始使用
 
-未完成，依優先序：
+打開 http://localhost:5173/dev ，可以試試：
 
-1. **Workers 上沒有資料庫** —— `pg` 需要 TCP，Workers 不支援，所以線上部署的任務標記、
-   通勤路線、通知、排程監看全是空的（本機 Node 部署正常，這個差異很容易被忽略）。
-   程式碼側已改成走 Cloudflare Hyperdrive，**剩下開一台雲端 Postgres、跑 migration、
-   填 id** —— 步驟寫在 `apps/api/wrangler.toml`。
-2. **叫車的實際報價與派車** —— 流程本身已完整可走：估價依**臺北市公告計程車費率**
-   實算（`services/ride.ts`），四頁串成同一趟。但那不是 yoxi 會收多少錢，
-   派車與司機也還是模擬的。卡在 yoxi API 的合作。
-3. **沒有登入** —— `X-User-Ref` 是裝置識別不是身分驗證，所以會員頁統計是假的、
-   「今天的行程」只能存在前端。
-4. **原生能力一個都還沒裝** —— 背景定位、推播、地理圍欄、AR。
+- 在聊天頁輸入「幫我安排西門町到台北車站」
+- 到探索頁點任務，按「叫車前往」走一次叫車流程
 
-### 位置與路徑規劃
+### 4.6 停止
 
-對話助理知道使用者在哪裡：前端每次發話都把定位帶進 `/agent/chat` 的 `location`
-欄位，所以「幫我安排當前位置到北車」直接規劃，不用反問。拿不到定位時工具會回
-`need_location`，串流會送一張卡片讓使用者當場開啟定位或手動輸入地點
-（走 `/geocode`），設定完自動用同一句話重問一次。
+- 前端與後端：在執行 `npm run dev:all` 的終端機按 `Ctrl + C`
+- 資料庫會留在背景執行，要關閉請執行 `npm run db:down`
 
-退路座標（信義區）**不會**被當成使用者位置送給後端 —— 那會讓人在台中卻拿到
-從市政府站出發的路線。
+## 5. 常見問題
 
-`plan_route` 自己會把起訖點的天氣一起查回來，畫面同時排出路線卡與天氣卡。
-刻意不靠模型再呼叫一次 `get_weather` —— 實測它常常呼叫了卻不帶地點，
-於是退回去用定位，使用者明明說了「西門町到北車」卻被要求開啟定位。
+**出現 `npm: command not found` 或 `node: command not found`**
+Node.js 沒有裝好。安裝完成後要關掉終端機再重新打開。
 
-規劃會看**現在幾點**（`services/metro-schedule.ts`）：
+**出現「docker daemon 沒有在跑，先打開 Docker Desktop」**
+打開 Docker Desktop，等它完全啟動後再執行一次。
 
-- **首末班車** — 收班後不會再回一條「三分鐘會到」的路線，改為明說沒有營運、
-  首班幾點，並建議叫車。首末班車是分方向的（同一站往兩端的末班差 20 分鐘以上），
-  所以會先用站序判斷這一段開往哪個端點。
-- **末班車倒數** — 距離末班車 30 分鐘以內時回 `closing-soon`，帶上還剩幾分鐘、
-  往哪個方向、以及**同一趟的叫車估價**。門檻抓 30 分是「還走得到車站」的下限。
-  在這之前末班車資料只在使用者主動問的時候才派得上用場 —— 但沒有人會在 00:30
-  想到要問，他會在 01:00 發現自己回不了家。顯示的分鐘數是**末班車到站的時間**，
-  不含走到車站，畫面上要講清楚。
-- **等車** — 用 TDX 的真實班距（分平日／假日、分尖峰／離峰）推期望等待＝班距的一半，
-  取代原本寫死的 120 秒。尖峰約 3 分、離峰約 5 分。
-- 只檢查第一段的營運狀態。中途各段需要「到站時是幾點」，而我們算的是期望值不是
-  時刻表推算，拿估計時間去查末班車會在接近收班時忽對忽錯。
-- 這兩份資料任一拿不到就退成「不確定」，不會讓規劃失敗。冷啟動時路網圖已經吃掉
-  4 次 TDX 額度，所以**先查首末班車再查班距** —— 等車估錯只是不準，
-  把收班的路線講成三分鐘會到是確定錯誤。
+**出現 `Port 5173 is in use` 或 `EADDRINUSE: 3000`**
+之前啟動的程式還沒關。找到那個終端機按 `Ctrl + C`。
 
-還沒做：即時延誤沒有進規劃（TDX 只有事件文字，沒有誤點分鐘數，
-硬換算成秒數會是編的），國定假日判斷不了（沒有假日行事曆來源）。
+**出現「Postgres 等了 30 秒還是接不上」**
+執行 `npm run db:logs` 查看資料庫的錯誤訊息。第一次建置比較慢，可以再執行一次 `npm run dev:all`。
 
-### 票價與車站設施
+**聊天回錯誤或回應很慢**
+先檢查 `apps/api/.env` 的 `NVIDIA_API_KEY` 和 `NVIDIA_MODEL` 是否正確。NVIDIA 的免費服務偶爾會忙碌（503 錯誤），程式會自動重試，稍後再試即可。
 
-`/transit/plan` 與 `/trip/options` 會帶上捷運票價（TDX `ODFare`）。
-在這之前比較頁講的是「捷運少花 8 分鐘」這種半句話 —— 省 8 分鐘要多付 40 元
-跟要多付 225 元是完全不同的決定。
+**路線規劃顯示「沒查到」**
+TDX 金鑰沒填，或超過使用量（每分鐘 5 次），等一分鐘再試。
 
-兩個實測到的資料限制，程式裡照著寫，不要「修正」：
+**Windows 無法執行 `npm run dev:all`**
+這是 Mac／Linux 的腳本，請在 Git Bash 或 WSL 中執行。或者開三個終端機分別執行 `npm run db:up`、`npm run dev:api`、`npm run dev`（第一次要先執行 `npm run db:migrate`）。
 
-- TRTC 的 `ODFare` **只有 `TicketType: 1`（單程票）**，沒有電子票證。悠遊卡
-  實際上有折扣與常客回饋，但那個數字 TDX 沒有公告 —— 所以一律附上
-  `basis`（「單程票全票；悠遊卡另有折扣與常客回饋，TDX 未公告」），
-  不要把它講成「捷運票價」。
-- `ODFare` 是兩兩組合、上萬列的回應。進來之後立刻壓成「起訖 → 價格」的索引，
-  原始陣列讓它被回收，不要整包放進快取。
+**想安裝到手機上**
+iPhone 需要 Mac 與 Xcode，Android 需要 Android Studio：
 
-車站出入口（TDX `StationExit`）回答「哪個出口有電梯」，由設定裡的
-「優先顯示無障礙路線」開啟，開了之後路線卡會顯示**轉乘站與出站口**的電梯資訊。
-`StationExit` 的三個欄位型別不一致（實測 2026-09）：
+```bash
+npm run ios
+npm run android
+```
 
-| 欄位 | 型別 |
+## 6. 金鑰不要上傳
+
+`apps/api/.env` 裡有你的私人金鑰，不要上傳到 GitHub 或分享給別人。
+
+- 專案已設定讓 git 忽略 `.env`，正常操作不會被上傳
+- 不要把金鑰寫進 `.env.example` 或任何程式碼檔案，這些檔案會被上傳
+- 萬一不小心上傳了，請立刻到該服務的網站作廢金鑰並重新產生。只刪除檔案沒有用，git 歷史紀錄裡還是查得到
+
+## 7. 其他文件
+
+| 文件 | 內容 |
 |---|---|
-| `Stair` / `Elevator` | 布林 `true` / `false` |
-| `Escalator` | 數字（`0` = 沒有，其餘是方向代碼） |
+| [Document/DEV_NOTES.md](Document/DEV_NOTES.md) | 技術選型、架構設計、實作細節 |
+| [Document/PlanMD/ROADMAP.md](Document/PlanMD/ROADMAP.md) | 開發進度與待辦 |
+| [Document/PlanMD/FEATURES_v1.md](Document/PlanMD/FEATURES_v1.md) | 提案中的功能 |
+| [Document/README.md](Document/README.md) | 設計稿截圖索引 |
 
-把 `Elevator` 當成 `0/1` 來比是會出事的：`true === 1` 是 `false`，
-每個出口都會被講成「沒有電梯」。這份資料**查不到就要照實說「查無資料」**，
-不能講成「沒有電梯」也不能猜成「有」—— 告訴一個坐輪椅的人某個出口有電梯
-而實際沒有，比不給資訊糟糕得多。所以 `hasElevator` 是三態（`true`/`false`/`null`）。
+### 專案結構
 
-### 工具失敗時
+```
+apps/mobile    App 畫面（前端）
+apps/api       後端伺服器與 AI 助理
+infra/         資料庫設定
+scripts/       啟動用腳本
+Document/      設計稿截圖與規劃文件
+```
 
-模型在工具回 error 時會自己編一段聽起來很合理的路線出來（實測過：TDX 額度用完，
-`plan_route` 回了錯誤，模型照樣描述了一條不存在的轉乘路線）。系統提示早就禁止編造，
-但提示詞擋不住這種事。
+### 常用指令
 
-所以 `plan_route` 失敗時會送一張 `notice` 卡 —— 不論模型講什麼，使用者都看得到
-「這次沒查到」。缺位置的 `location_request` 也是同一個模式：**把真相放進畫面，
-不要依賴模型自律。**
-
-### 行程
-
-行程頁的「下一段」卡會顯示「現在出發約 N 分鐘・預計 HH:MM 抵達」，收班時改顯示
-末班與首班。
-
-設計稿寫的是「建議 08:05 出發」。反推出發時間需要知道使用者「幾點要到」，
-通勤設定現在會問（`commute_routes.arrive_by`），設定過就改顯示**出發倒數**
-（`services/departure.ts`）：「再 6 分鐘出門，或現在叫車還來得及」。
-
-倒數估太樂觀的代價是使用者錯過會議，所以每個保守選擇都是刻意的：
-
-- 等車一律是班距的一半（期望值不是保證），而且 `basis` 照實講出來
-- 多抓 5 分鐘出門緩衝，且**單獨列出來**不藏進總時間
-- 班表或班距拿不到就降級成 `confidence: 'low'` 並說明少了哪一份
-- 只在出發前 90 分鐘內、逾時 30 分鐘內才倒數；視窗外回 `null`，
-  畫面退回「現在出發約 N 分鐘」
-
-`arrive_by` 刻意**不**沿用 `usual_time_end`：後者是「什麼時段的異常要通知我」，
-前者是「我幾點要到」。共用一個欄位的話，改通知時段會默默改掉出發倒數，
-而使用者完全看不出因果。
-
-`/transit/plan` 的 `Cache-Control` 從一小時降到兩分鐘，前端的記憶體快取也加了同樣的
-TTL：這支的回應現在跟時間有關，00:30 查到的「營運中」放到 01:30 就是錯的。
-
-行程頁有**兩種**東西，刻意分開，不要混：
-
-| | 常用路線 | 今天的行程 |
-|---|---|---|
-| 性質 | 重複發生的通勤 | 一次性 |
-| 數量 | 一人**兩條**（上班／回家，各自覆蓋式） | 當天多筆，跨日消失 |
-| 怎麼建立 | 使用者描述日常通勤 → 模型**自動**存 | 使用者**明示**才存 |
-| 用途 | 驅動路線異常通知 | 記下今天決定要走的那條 |
-| 存在哪 | Postgres（`commute_routes`） | 前端 localStorage（`lib/trips.ts`） |
-
-分流的判準是**信號強度**：「我每天從板橋搭捷運到市政府」是明確宣告，自動存是對的；
-「幫我安排西門町到北車」很可能只是問路，猜錯就是往使用者每天早上會看的那一頁塞垃圾。
-所以一次性的行程有三條路徑：路線卡上的「加入今天行程」按鈕、使用者明講時模型呼叫
-`save_trip`、以及兩者都不做（只是問路）。
-
-`save_trip` 會**重新規劃一次**而不是叫模型把路線內容傳進來 —— 讓模型複述站名與
-分鐘數，它就有機會抄錯，而抄錯的結果會被直接寫進使用者的行程。重算的成本幾乎是零
-（路網圖與路線都有快取）。收班中的路線會拒絕加入。
-
-今天的行程存在前端而不是資料庫，是因為 Workers 上沒有資料庫（`pg` 需要 TCP），
-而且目前沒有身分驗證 —— `X-User-Ref` 是裝置識別不是帳號，寫進資料庫也不會跨裝置同步。
-等到要做「提醒你該出發了」那種伺服器端功能時才需要搬進去。
-
-路徑規劃用 **Yen's K-Shortest Loopless Paths + Dijkstra**，回傳建議路線與備選。
-備選會濾掉「又慢又要多轉一次」的路（Pareto 支配），所以常常是空的，那是正確的。
-不用 A\* 的理由寫在 `services/route-planner.ts` 的檔頭。
-
-天氣除了現況，另外抓 8 小時逐時預報，導出帶傘（降雨機率 ≥ 30%）與依**體感溫度**
-分級的穿著建議。首頁小卡刻意只顯示「有事才提醒」的那幾則，穿著建議不算事件。
-
-`rainStartsAt` 只回報**未來**的小時。現在這個小時就過門檻時是 null，文案改成
-「可能會下雨」而不是「等一下可能下雨」—— 否則 11:52 查到的卡片會寫
-「約 11:00 起降雨」，那個時間已經過去了。
-
-捷運與公車即時狀態已接上 TDX（需在 `.env` 填 `TDX_CLIENT_ID` / `TDX_CLIENT_SECRET`），
-端點為 `/transit/metro?line=` 與 `/transit/bus?route=&city=&stop=`。
-`/transit/plan?from=&to=` 回傳最佳路線（欄位攤平在最外層）加上 `alternatives`；
-路網圖快取一天，這支不吃 TDX 額度。`/geocode?q=` 是地名轉座標。
-站名比對會把「臺」摺成「台」（TDX 站表寫的是「台北車站」），
-所以兩種寫法都查得到。
-
-TDX 實測額度是**每分鐘 5 次**，不是文件寫的每秒 50 次，所以
-`services/tdx.ts` 的快取、併發合流與配額守門都不能拿掉。
-兩邊拿得到的資料不對稱，畫面上不要硬湊成一樣：
-
-| | 捷運 | 公車 |
-|---|---|---|
-| 到站倒數 | 無（LiveBoard 只有「正在進站」快照） | 有，真實秒數 |
-| 誤點分鐘數 | 無 | 無 |
-| 事件通報 | 有 | 有 |
+```bash
+npm run dev          # 只啟動前端，http://localhost:5173
+npm run dev:api      # 只啟動後端，http://localhost:3000
+npm run dev:all      # 資料庫、後端、前端一起啟動
+npm run db:up        # 啟動資料庫
+npm run db:down      # 關閉資料庫
+npm run db:migrate   # 建立或更新資料表
+npm run typecheck    # 型別檢查
+npm run lint         # 程式碼風格檢查
+```
