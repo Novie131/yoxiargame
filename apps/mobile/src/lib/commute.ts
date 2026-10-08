@@ -1,7 +1,8 @@
+import type { CommuteRoute, RouteLabel, TransportMode } from '@api/db/repositories/commute.ts'
+import type { RouteBody } from '@api/routes/commute.ts'
 import { useEffect, useSyncExternalStore } from 'react'
 
-import { API_URL } from './api'
-import { userHeaders } from './userRef'
+import { api, errorOf } from './client'
 
 /*
  * 使用者設定的通勤路線。
@@ -22,15 +23,14 @@ import { userHeaders } from './userRef'
  * 末班車分方向、尖峰離峰的班距完全不同 —— 所以它必須是獨立的一條。
  */
 
-export type TransportMode = 'metro' | 'bus' | 'mixed'
-
 /*
- * 路線的用途。跟後端 repositories/commute.ts 的 RouteLabel 一致。
+ * 路線的型別直接用後端的（db/repositories/commute.ts），不在前端再抄一份 ——
+ * 抄的那份遲早會跟後端對不上，而且對不上的時候編譯器不會講。
  *
- * 刻意只有兩個固定值：讓使用者自己命名會變成一個沒人填的欄位，
- * 而兩條（上班／回家）已經解決 90% 的情況，更多就變成行程管理了。
+ * label 是路線的用途（上班、回家）。刻意只有兩個固定值：讓使用者自己命名
+ * 會變成一個沒人填的欄位，而兩條已經解決 90% 的情況，更多就變成行程管理了。
  */
-export type RouteLabel = 'commute' | 'home'
+export type { CommuteRoute, RouteLabel, TransportMode }
 
 export const ROUTE_LABELS: RouteLabel[] = ['commute', 'home']
 
@@ -43,48 +43,6 @@ export const ROUTE_LABEL_TEXT: Record<RouteLabel, { title: string; from: string;
 
 export function isRouteLabel(value: unknown): value is RouteLabel {
   return value === 'commute' || value === 'home'
-}
-
-export type CommuteRoute = {
-  /** 這是上班那條還是回家那條 */
-  label: RouteLabel
-  /** 出發站，例如「板橋站」 */
-  origin: string
-  /** 目的站，例如「市政府站」 */
-  destination: string
-  /** 主要運具 */
-  mode: TransportMode
-  /** 主要運具的路線名，例如「板南線」。後端推不出來時是 null，畫面就不顯示即時狀態。 */
-  line: string | null
-  /*
-   * TDX 城市代碼。只有公車需要 —— 公車路線名要搭配城市才查得到，
-   * 「307」在臺北與臺中是完全不同的兩條線。
-   */
-  city: string | null
-  /*
-   * 通知時段。這是通知準確度的前提 —— 不知道使用者幾點通勤，
-   * 就只能在半夜也推「板南線有異常」，那只會讓他把通知關掉。
-   *   usualDays 空陣列 = 每天（不是「都不」）
-   *   時間為 null     = 沒指定，後端會套 23:00–06:00 的靜音時段兜底
-   */
-  usualDays: string[]
-  usualTimeStart: string | null
-  usualTimeEnd: string | null
-  /*
-   * 幾點要到目的地（HH:MM）。出發倒數的時間錨點。
-   *
-   * 跟上面那兩個不是同一件事：它們講的是「什麼時段的異常要通知我」，
-   * 這個講的是「我幾點要到」。null = 沒設定，行程頁就退回
-   * 「現在出發約 N 分鐘」，不要猜一個時間。
-   */
-  arriveBy: string | null
-  /*
-   * 通勤異常通知的總開關。後端的輪詢是用這個欄位過濾的
-   * （transit-watch 的 WHERE notification_enabled），關掉就真的不會再產生通知。
-   */
-  notificationEnabled: boolean
-  /** 誤點幾分鐘才通知。目前還不能改，先讓設定頁顯示真實值而不是寫死的 5。 */
-  delayThresholdMinutes: number
 }
 
 /*
@@ -232,15 +190,16 @@ function subscribe(listener: () => void) {
 let refreshed: Promise<void> | null = null
 
 async function fetchRoutes(): Promise<RouteMap> {
-  const res = await fetch(`${API_URL}/commute/route`, { headers: userHeaders() })
-  if (!res.ok) throw new Error(`伺服器回應 ${res.status}`)
+  const res = await api.commute.route.$get({ query: {} })
+  if (!res.ok) throw await errorOf(res)
 
-  const body = (await res.json()) as { routes?: unknown; route?: unknown }
+  const body = await res.json()
   /*
    * routes 是新的欄位。舊的後端只回 route（單數），這裡照樣讀得回來 ——
    * 前後端不會同時部署，中間那段時間畫面不該空掉。
+   * 型別上 routes 一定在，但部署落差是型別管不到的，所以執行期照樣檢查。
    */
-  const list = Array.isArray(body.routes) ? body.routes : [body.route]
+  const list: unknown[] = Array.isArray(body.routes) ? body.routes : [body.route]
   return toMap(list.map(parseRoute).filter((r): r is CommuteRoute => r !== null))
 }
 
@@ -272,26 +231,10 @@ export function refresh(): Promise<void> {
   return refreshed
 }
 
-export type SaveCommuteRouteInput = {
+/** 送出的欄位跟後端 routes/commute.ts 的 RouteBody 一致，另外可以指定是哪一條 */
+export type SaveCommuteRouteInput = RouteBody & {
   /** 沒給就是上班那條 */
   label?: RouteLabel
-  origin: string
-  destination: string
-  mode: TransportMode
-  /** 使用者自己指定的路線名；沒給就由後端從起訖站推 */
-  line?: string | null
-  /** TDX 城市代碼。公車必要，捷運不用。 */
-  city?: string | null
-  /** 空陣列 = 每天 */
-  usualDays?: string[]
-  /** 兩個必須成對給，只給一邊後端會回 400 */
-  usualTimeStart?: string | null
-  usualTimeEnd?: string | null
-  /*
-   * 幾點要到目的地（HH:MM）。出發倒數的時間錨點。
-   * 跟上面那兩個無關，可以單獨給。沒給就沒有倒數。
-   */
-  arriveBy?: string | null
 }
 
 export type SaveCommuteRouteResult = {
@@ -309,25 +252,12 @@ export type SaveCommuteRouteResult = {
 export async function save(input: SaveCommuteRouteInput): Promise<SaveCommuteRouteResult> {
   const { label = DEFAULT_ROUTE_LABEL, ...body } = input
 
-  /* label 走查詢參數，其餘走 body —— 跟後端 app.ts 的 parseLabel 對齊 */
-  const res = await fetch(`${API_URL}/commute/route?label=${label}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...userHeaders() },
-    body: JSON.stringify(body),
-  })
+  /* label 走查詢參數，其餘走 body —— 跟後端 routes/commute.ts 的 labelQuery 對齊 */
+  const res = await api.commute.route.$post({ query: { label }, json: body })
+  if (!res.ok) throw await errorOf(res)
 
-  if (!res.ok) {
-    const detail = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new Error(detail?.error ?? `伺服器回應 ${res.status}`)
-  }
-
-  const saved = (await res.json()) as {
-    route?: unknown
-    transferRequired?: unknown
-    persisted?: unknown
-  }
-  const route = parseRoute(saved.route)
-  if (!route) throw new Error('伺服器回傳的路線格式不正確')
+  const saved = await res.json()
+  const { route } = saved
 
   /* 只換掉這一個 label，另一條不受影響 */
   const routes = { ...state.routes, [route.label]: route }
@@ -338,8 +268,8 @@ export async function save(input: SaveCommuteRouteInput): Promise<SaveCommuteRou
 
   return {
     route,
-    transferRequired: saved.transferRequired === true,
-    persisted: saved.persisted !== false,
+    transferRequired: saved.transferRequired,
+    persisted: saved.persisted,
   }
 }
 
@@ -363,23 +293,16 @@ export async function setNotificationEnabled(
   patch({ routes: optimistic })
 
   try {
-    const res = await fetch(`${API_URL}/commute/route?label=${label}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...userHeaders() },
-      body: JSON.stringify({ notificationEnabled: enabled }),
+    const res = await api.commute.route.$patch({
+      query: { label },
+      json: { notificationEnabled: enabled },
     })
-    if (!res.ok) {
-      const detail = (await res.json().catch(() => null)) as { error?: string } | null
-      throw new Error(detail?.error ?? `伺服器回應 ${res.status}`)
-    }
+    if (!res.ok) throw await errorOf(res)
 
-    const body = (await res.json()) as { route?: unknown }
-    const route = parseRoute(body.route)
-    if (route) {
-      const routes = { ...state.routes, [route.label]: route }
-      writeCache(routes)
-      patch({ routes })
-    }
+    const { route } = await res.json()
+    const routes = { ...state.routes, [route.label]: route }
+    writeCache(routes)
+    patch({ routes })
   } catch (error) {
     /* 沒改成功就不要留著一個看起來已經改好的畫面 */
     writeCache(previous)
@@ -414,14 +337,12 @@ export async function clear(label: RouteLabel = DEFAULT_ROUTE_LABEL): Promise<vo
   patch({ routes })
   refreshed = Promise.resolve()
 
-  const res = await fetch(`${API_URL}/commute/route?label=${label}`, {
-    method: 'DELETE',
-    headers: userHeaders(),
-  })
-  if (!res.ok && res.status !== 404) {
+  const res = await api.commute.route.$delete({ query: { label } })
+  /* 後端刪不存在的路線也回 204，所以這裡不用另外放行 404 */
+  if (!res.ok) {
     /* 本機已經清掉了，但後端還留著 —— 下次 refresh 會把它撿回來，所以要讓呼叫端知道 */
     refreshed = null
-    throw new Error(`伺服器回應 ${res.status}`)
+    throw await errorOf(res)
   }
 }
 

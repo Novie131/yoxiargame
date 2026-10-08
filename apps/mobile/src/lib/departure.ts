@@ -1,9 +1,8 @@
+import type { DepartureConfidence, DeparturePlan } from '@api/services/departure.ts'
 import { useEffect, useState } from 'react'
 
-import { API_URL } from './api'
+import { api } from './client'
 import type { RouteLabel } from './commute'
-import type { RideEstimate } from './ride'
-import { userHeaders } from './userRef'
 
 /*
  * 出發倒數，資料來自後端的 /commute/departure。
@@ -16,30 +15,12 @@ import { userHeaders } from './userRef'
  * 猜錯的代價是使用者錯過會議，而他會以為那是我們算好的。
  */
 
-export type DepartureConfidence = 'normal' | 'low'
-
-export type Departure = {
-  /** 使用者設定的抵達時間，HH:MM */
-  arriveBy: string
-  /** 建議幾點出門，HH:MM。已經含出門緩衝。 */
-  departBy: string
-  /** 距離建議出發還有幾分鐘。負數代表已經該出門了。 */
-  minutesUntilDeparture: number
-  /** 門到門：車程 + 轉乘 + 期望等車 + 出門緩衝 */
-  totalMinutes: number
-  /** 其中的期望等車。班距的一半，是期望值不是保證。 */
-  waitMinutes: number
-  /** 其中的出門緩衝。單獨列出來，不要藏進總時間裡。 */
-  bufferMinutes: number
-  /** low 時畫面要明顯地降級顯示，不要照常倒數 */
-  confidence: DepartureConfidence
-  /** confidence 為 low 時說明少了哪一份資料 */
-  caveat: string | null
-  /** 這個倒數怎麼算的。要原封不動顯示，理由跟 ride.ts 的 basis 一樣。 */
-  basis: string
-  /** 來不及時的叫車估價。還來得及時是 null。 */
-  rideFallback: RideEstimate | null
-}
+/*
+ * 倒數的形狀直接用後端的（services/departure.ts 的 DeparturePlan），
+ * 各欄位的意思與畫面該怎麼顯示，註解都在那裡。
+ */
+export type Departure = DeparturePlan
+export type { DepartureConfidence }
 
 export type DepartureState =
   | { status: 'loading' }
@@ -87,13 +68,14 @@ export function useDeparture(label: RouteLabel | null): DepartureState {
     if (fresh(label)) return
 
     let alive = true
-    fetch(`${API_URL}/commute/departure?label=${label}`, { headers: userHeaders() })
+    api.commute.departure
+      .$get({ query: { label } })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
-        return (await res.json()) as { departure?: Departure | null }
+        return res.json()
       })
       .then((body) => {
-        const departure = body.departure ?? null
+        const departure = body.departure
         cache.set(label, { at: Date.now(), departure })
         if (alive) setResult({ label, state: { status: 'ready', departure } })
       })

@@ -17,7 +17,15 @@
     "jsx": "react-jsx",
 
     /* 路徑別名，對應 vite.config.ts 的 resolve.alias */
-    "paths": { "@/*": ["./src/*"] },
+    "paths": {
+      "@/*": ["./src/*"],
+      /*
+       * 後端原始碼，只給 `import type` 用（Hono RPC 的 AppType、共用的資料型別）。
+       * 刻意不在 vite.config.ts 設對應的 alias —— 執行期誤 import 後端會直接建置失敗，
+       * 不會把 pg、金鑰讀取之類的東西打包進 App。
+       */
+      "@api/*": ["../api/src/*"]
+    },
 
     /* Linting */
     "noUnusedLocals": true,
