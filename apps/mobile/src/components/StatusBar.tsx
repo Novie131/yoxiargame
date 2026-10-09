@@ -39,6 +39,9 @@ function useClock() {
  *    判斷，轉螢幕、縮視窗都會即時跟著變，不必自己監聽 resize。
  * 3. 矮螢幕（手機瀏覽器轉橫向）—— 寬度超過 430 但它仍然是手機，
  *    只看寬度會誤判成桌機，在最缺高度的時候再吃掉 44px。
+ *    用 short:hidden 蓋掉，不要改用 not- 前綴的反向寫法 —— short 是「高度 and 橫向」
+ *    的組合條件，Tailwind 產生的反向是 `@media not (a) and (b)`，不合法，
+ *    瀏覽器會整條忽略，結果是任何尺寸都不顯示（踩過）。
  *
  * time 只在要跟設計稿逐張比對時才傳（設計稿是 14:10 那種固定值），
  * 平常留空就顯示裝置的真實時間。
@@ -48,7 +51,7 @@ export function StatusBar({ time }: { time?: string }) {
   if (Capacitor.isNativePlatform()) return null
 
   return (
-    <div className="hidden h-11 shrink-0 items-center justify-between px-6 text-[15px] font-semibold text-ink min-[431px]:not-short:flex">
+    <div className="hidden h-11 shrink-0 items-center justify-between px-6 text-[15px] font-semibold text-ink min-[431px]:flex short:hidden">
       <span>{time ?? now}</span>
       <div className="flex items-center gap-1.5">
         <svg viewBox="0 0 18 12" width="18" height="12" fill="currentColor">
