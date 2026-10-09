@@ -69,7 +69,11 @@ export function TripInProgressScreen() {
           </p>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2.5 border-t border-black/[.06] pt-3">
+        {/*
+          * 窄螢幕不再對半分：「12 分鐘」用不到半格，車資卻可能是「NT$1230-1555」
+          * 這種四位數的範圍。讓左格照內容寬、右格吃剩下的，車資就不用縮到看不清楚。
+          */}
+        <div className="mt-3 grid grid-cols-2 gap-2.5 border-t border-black/[.06] pt-3 max-[359px]:grid-cols-[auto_1fr]">
           <div className="rounded-xl bg-primary-tint px-3.5 py-3">
             <p className="text-[12px] text-subtle">{arrived ? '行程狀態' : '預計抵達'}</p>
             <p className="mt-0.5 text-[20px] font-bold">
@@ -79,8 +83,8 @@ export function TripInProgressScreen() {
           <div className="rounded-xl bg-primary-tint px-3.5 py-3">
             <p className="text-[12px] text-subtle">預估費用</p>
             {/*
-              * 車資是一個值，不能從「-」斷開。半寬的格子在 320 寬只剩約 110px，
-              * 20px 的「NT$230-255」放不下，所以窄螢幕降一級字。
+              * 車資是一個值，不能從「-」斷開。窄螢幕除了上面讓格子變寬，
+              * 再降一級字，四位數的範圍才放得下。
               */}
             <p className="mt-0.5 whitespace-nowrap text-[20px] font-bold text-primary max-[359px]:text-[17px]">
               {formatFare(ride.estimate.fare)}

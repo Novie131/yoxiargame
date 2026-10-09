@@ -56,7 +56,12 @@ export function TabBar() {
 
   return (
     <nav className="safe-bottom shrink-0 border-t border-black/5 bg-surface">
-      <div className="grid h-14 grid-cols-5 items-center">
+      {/*
+        * 橫向（short）改成矮版：56px → 44px，圖示與文字左右並排 ——
+        * 和 iOS 原生 tab bar 轉橫時的做法一樣。橫向時高度只有 300 多 px，
+        * 底下這一條是每一頁都要扣掉的固定成本，省 12px 就是內容多 12px。
+        */}
+      <div className="grid h-14 grid-cols-5 items-center short:h-11">
         {tabs.map(({ to, label, Icon }, i) => (
           <NavLink
             key={to}
@@ -64,7 +69,7 @@ export function TabBar() {
             // 中央那格留給切換鈕，所以第 3 格要跳過
             style={{ gridColumnStart: i < 2 ? i + 1 : i + 2 }}
             /* 預設的焦點外框套在這排小圖示上很突兀，改成只在鍵盤操作時出現 */
-            className="flex flex-col items-center gap-0.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            className="flex flex-col items-center gap-0.5 rounded-lg short:flex-row short:justify-center short:gap-1 outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             {({ isActive }) => (
               <>
@@ -96,12 +101,17 @@ export function TabBar() {
           style={{ gridColumnStart: 3, gridRowStart: 1, background: 'var(--color-brand-red)' }}
           /*
            * h-12（48px）在 h-14（56px）的列裡上下各留 4px，比圖示大一圈
-           * 但不會頂到邊。陰影只用中性墨色表達高度 ——
+           * 但不會頂到邊。橫向矮版照同樣比例縮成 h-9 在 h-11 裡，
+           * 點擊範圍由 hit-area 補回 44px（剛好是整條 tab bar 的高度）。陰影只用中性墨色表達高度 ——
            * 之前用品牌紅的光暈，在白底上會暈成一塊橘色髒污。
            */
-          className="mx-auto flex h-12 w-12 items-center justify-center rounded-full shadow-[0_2px_8px_rgba(22,32,55,.20)] outline-none transition-transform active:scale-95 focus-visible:ring-4 focus-visible:ring-ink/25"
+          className="mx-auto flex h-12 w-12 short:hit-area short:h-9 short:w-9 items-center justify-center rounded-full shadow-[0_2px_8px_rgba(22,32,55,.20)] outline-none transition-transform active:scale-95 focus-visible:ring-4 focus-visible:ring-ink/25"
         >
-          {onAgent ? <CarIcon active className="h-7 w-7" /> : <YoxiMark className="h-7 w-7" />}
+          {onAgent ? (
+            <CarIcon active className="h-7 w-7 short:h-6 short:w-6" />
+          ) : (
+            <YoxiMark className="h-7 w-7 short:h-6 short:w-6" />
+          )}
         </Link>
       </div>
     </nav>

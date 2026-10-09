@@ -60,7 +60,11 @@ export function ChatComposer({
         </p>
       )}
 
-      <form onSubmit={submit} className="flex items-center gap-3 px-4 py-3">
+      {/*
+        * 橫向（short）只收上下留白，輸入框與按鈕維持 44px ——
+        * 那是要用手指點的東西，高度不夠時該讓的是空白，不是觸控尺寸。
+        */}
+      <form onSubmit={submit} className="flex items-center gap-3 px-4 py-3 short:py-1.5">
         <KeyboardIcon />
 
         <div className="relative flex-1">
