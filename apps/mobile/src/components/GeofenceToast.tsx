@@ -35,7 +35,7 @@ export function GeofenceToast({
       className="fixed inset-x-0 bottom-[72px] z-40 px-4"
       role="status"
     >
-      <div className="mx-auto flex max-w-[430px] items-center gap-3 rounded-2xl bg-ink px-4 py-3 shadow-[0_6px_20px_rgba(22,32,55,.28)]">
+      <div className="mx-auto flex max-w-shell items-center gap-3 rounded-2xl bg-ink px-4 py-3 shadow-[0_6px_20px_rgba(22,32,55,.28)]">
         <span className="text-[20px]">📍</span>
 
         <div className="min-w-0 flex-1">

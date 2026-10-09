@@ -59,7 +59,7 @@ function Toggle({
       aria-label={label}
       disabled={disabled}
       onClick={onChange}
-      className="relative h-[30px] w-[50px] shrink-0 rounded-full transition-colors disabled:opacity-40"
+      className="hit-area h-[30px] w-[50px] shrink-0 rounded-full transition-colors disabled:opacity-40"
       style={{ background: on ? 'var(--color-primary)' : 'var(--color-line)' }}
     >
       <span

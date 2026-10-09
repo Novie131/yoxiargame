@@ -161,7 +161,12 @@ export function MissionSheet({
         className="fixed inset-0 z-40 bg-ink/30"
       />
 
-      <div className="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-surface px-4 pb-6 pt-2.5 shadow-[0_-4px_20px_rgba(22,32,55,.18)]">
+      {/*
+        * fixed 是對整個視窗定位，不加 max-w-shell 的話，
+        * 在平板或桌機上面板會橫跨整個螢幕、跑出手機殼。
+        * inset-x-0 加 mx-auto 讓它在限寬之後仍然置中。
+        */}
+      <div className="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-shell rounded-t-3xl bg-surface px-4 pb-6 pt-2.5 shadow-[0_-4px_20px_rgba(22,32,55,.18)]">
         <span className="mx-auto mb-3 block h-1 w-9 rounded-full bg-line/70" />
 
         <div className="flex items-start justify-between gap-3">

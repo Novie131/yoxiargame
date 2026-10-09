@@ -476,7 +476,7 @@ export function TripsScreen() {
           type="button"
           aria-label={unreadCount > 0 ? `通知，${unreadCount} 則未讀` : '通知'}
           onClick={() => navigate('/notifications')}
-          className="relative pt-1.5"
+          className="hit-area pt-1.5"
         >
           <BellIcon />
           {/* 這個數字現在是真的：後端監看到的、與這個人路線相關的未讀事件 */}

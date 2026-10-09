@@ -405,7 +405,7 @@ function SetupForm({
               onClick={() => toggleDay(d.value)}
               aria-pressed={days.includes(d.value)}
               className={[
-                'h-9 flex-1 rounded-lg text-[13px] font-semibold transition-colors',
+                'hit-area-y h-9 flex-1 rounded-lg text-[13px] font-semibold transition-colors',
                 days.includes(d.value)
                   ? 'bg-primary text-white'
                   : 'bg-surface-3 text-muted',

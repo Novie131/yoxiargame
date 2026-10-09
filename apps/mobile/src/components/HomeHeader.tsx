@@ -44,16 +44,22 @@ export function HomeHeader({
         * 建議帶傘」比原本的「記得帶傘」長得多），不讓它退讓的話會把左邊那欄
         * 壓到零寬，地名跟溫度就會被擠成一個字一行（實際發生過）。
         * 所以給它上限並讓內文自己截斷。
+        *
+        * 窄於 360 時改成上下排：52% 的上限在 320 寬只留給問候語約 120px，
+        * 「晚安，陌生人」這種六個字的就會被截成「晚安，陌...」。
         */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="flex items-start justify-between gap-3 max-[359px]:flex-col max-[359px]:gap-2">
+        <div className="min-w-0 flex-1 max-[359px]:w-full">
           <h1 className="truncate text-[22px] font-bold tracking-tight">{heading}</h1>
 
           {/* 不換行 + 溢出省略：地名、溫度、天氣三段加起來很容易超過寬度 */}
           <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden text-[13px] text-muted">
             {location ? (
               <>
-                {location} <SunIcon />
+                <span className="min-w-0 truncate">{location}</span>
+                <span className="shrink-0">
+                  <SunIcon />
+                </span>
               </>
             ) : weather.status === 'ready' ? (
               <>
@@ -74,7 +80,7 @@ export function HomeHeader({
         </div>
 
         {card && (
-          <div className="flex max-w-[52%] items-center gap-2 rounded-2xl bg-surface px-3 py-2 shadow-[0_2px_10px_rgba(22,32,55,.10)]">
+          <div className="flex max-w-[52%] items-center gap-2 max-[359px]:max-w-full rounded-2xl bg-surface px-3 py-2 shadow-[0_2px_10px_rgba(22,32,55,.10)]">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning-tint">
               <SunIcon />
             </span>

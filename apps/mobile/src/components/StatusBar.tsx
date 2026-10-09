@@ -32,11 +32,13 @@ function useClock() {
 /*
  * 桌機瀏覽器預覽時畫一條假狀態列，讓畫面跟設計稿對得起來。
  *
- * 不渲染的兩種情況：
+ * 不渲染的三種情況：
  * 1. 真機（Capacitor）—— 系統本來就有狀態列，會疊兩層。
  * 2. 視窗寬度 ≤ 430px（手機瀏覽器）—— 手機殼已經滿版，上面又有系統狀態列
  *    和瀏覽器網址列，再加一條假的只是白白吃掉一整條高度。用 CSS breakpoint
  *    判斷，轉螢幕、縮視窗都會即時跟著變，不必自己監聽 resize。
+ * 3. 矮螢幕（手機瀏覽器轉橫向）—— 寬度超過 430 但它仍然是手機，
+ *    只看寬度會誤判成桌機，在最缺高度的時候再吃掉 44px。
  *
  * time 只在要跟設計稿逐張比對時才傳（設計稿是 14:10 那種固定值），
  * 平常留空就顯示裝置的真實時間。
@@ -46,7 +48,7 @@ export function StatusBar({ time }: { time?: string }) {
   if (Capacitor.isNativePlatform()) return null
 
   return (
-    <div className="hidden h-11 shrink-0 items-center justify-between px-6 text-[15px] font-semibold text-ink min-[431px]:flex">
+    <div className="hidden h-11 shrink-0 items-center justify-between px-6 text-[15px] font-semibold text-ink min-[431px]:not-short:flex">
       <span>{time ?? now}</span>
       <div className="flex items-center gap-1.5">
         <svg viewBox="0 0 18 12" width="18" height="12" fill="currentColor">

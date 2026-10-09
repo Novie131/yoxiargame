@@ -78,7 +78,11 @@ export function TripInProgressScreen() {
           </div>
           <div className="rounded-xl bg-primary-tint px-3.5 py-3">
             <p className="text-[12px] text-subtle">預估費用</p>
-            <p className="mt-0.5 text-[20px] font-bold text-primary">
+            {/*
+              * 車資是一個值，不能從「-」斷開。半寬的格子在 320 寬只剩約 110px，
+              * 20px 的「NT$230-255」放不下，所以窄螢幕降一級字。
+              */}
+            <p className="mt-0.5 whitespace-nowrap text-[20px] font-bold text-primary max-[359px]:text-[17px]">
               {formatFare(ride.estimate.fare)}
             </p>
           </div>

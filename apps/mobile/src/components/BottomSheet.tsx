@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
  * 叫車流程四張稿共用的底部面板。
  *
  * 這裡曾經為了讓開 tab bar 中央那顆浮出來的鈕而多留一截底部空間。
- * 現在不需要了 —— 那顆鈕改由 TabBar 自己保留高度（見 TabBar 的 pt-4），
+ * 現在不需要了 —— 那顆鈕收進了 tab bar 的格線裡（見 TabBar 的說明），
  * 不再突出到別人的版面裡。留著的話會變成一塊沒有理由的空白。
  */
 export function BottomSheet({ children }: { children: ReactNode }) {

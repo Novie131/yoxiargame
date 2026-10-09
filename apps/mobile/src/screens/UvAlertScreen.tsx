@@ -47,11 +47,15 @@ export function UvAlertScreen() {
             /* 公車路線的細節在行程頁，那裡查的是真實的 TDX 狀態 */
             onCta={() => navigate('/trips')}
           >
-            <div className="flex items-center gap-4 text-[13px] text-muted">
-              <span className="flex items-center gap-1">
+            {/*
+              * 兩組各自不斷行、放不下就整組換到下一行。
+              * 不這樣做的話 320 寬會斷成「約 30 分／鐘」「公車 307 直／達」。
+              */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-muted">
+              <span className="flex items-center gap-1 whitespace-nowrap">
                 <ClockIcon />約 30 分鐘
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1 whitespace-nowrap">
                 <span>🚌</span>公車 307 直達
               </span>
             </div>

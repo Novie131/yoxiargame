@@ -244,7 +244,7 @@ export function ExploreScreen() {
                   onClick={() => setCityId((prev) => (prev === c.id ? null : c.id))}
                   aria-pressed={c.id === cityId}
                   className={[
-                    'rounded-full px-3 py-1.5 text-[13px] font-semibold transition-colors',
+                    'hit-area rounded-full px-3 py-1.5 text-[13px] font-semibold transition-colors',
                     c.id === cityId ? 'bg-primary text-white' : 'bg-surface-3 text-muted',
                   ].join(' ')}
                 >

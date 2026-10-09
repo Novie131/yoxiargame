@@ -33,8 +33,14 @@ export function MapBackdrop({
   const location = useUserLocation()
   const focus = center ?? { lat: location.lat, lon: location.lon }
 
+  /*
+   * 橫向（short）時保底 144px。底部面板不會縮，min-h-0 的地圖就成了唯一被擠的人 ——
+   * 實測會被壓到剩 10px，疊在上面的搜尋框、返回鈕就直接壓到面板上。
+   * 保底之後整頁會比畫面高一點，由 AppShell 的 main 負責捲動。
+   * 直向不受影響：最矮的直向手機上地圖也還有 90px 以上，加保底反而會把 CTA 推出畫面。
+   */
   return (
-    <div className="relative min-h-0 flex-1 bg-surface-3">
+    <div className="relative min-h-0 flex-1 bg-surface-3 short:min-h-36">
       {/*
         * 定位要靠外層這個 div，不能把 absolute inset-0 直接給 Map ——
         * MapLibre 的 CSS 有 .maplibregl-map { position: relative }，

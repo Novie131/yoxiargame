@@ -45,7 +45,21 @@
 
   --radius-card: 16px;
   --radius-chip: 999px;
+
+  /*
+   * 手機殼的最大寬度（max-w-shell）。AppShell 用它限寬，
+   * 任何 fixed 定位、會脫離手機殼的浮層也要用同一個值把自己夾回來 ——
+   * fixed 是對整個視窗定位，不會自動跟著手機殼的寬度。
+   */
+  --container-shell: 430px;
 }
+
+/*
+ * 矮螢幕：手機轉橫向。
+ * 直向手機最矮的也有 568px（iPhone SE 一代），所以 500 以下只會是橫向。
+ * 這時候高度才是稀缺資源，要讓版面改成可以捲動，而不是把東西擠扁。
+ */
+@custom-variant short (@media (max-height: 500px));
 
 html,
 body,
@@ -130,6 +144,33 @@ body {
 .safe-x {
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
+}
+
+/*
+ * 點擊範圍至少 44px（Apple HIG 的最小觸控尺寸），但不改外觀。
+ *
+ * 做法是一層透明的 ::before 往外撐：top/bottom 的百分比對到元素自己的高度，
+ * left/right 對到寬度，所以 min(0px, (100% - 44px) / 2) 剛好把不足的部分
+ * 平均補在兩側；本來就夠大的那一軸算出來是 0，不會多撐。
+ *
+ * hit-area-y 只撐上下：給一排緊鄰的小按鈕用（例如星期選擇），
+ * 左右撐出去會蓋到隔壁，點邊緣就按錯顆。
+ */
+@utility hit-area {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: min(0px, calc((100% - 44px) / 2));
+  }
+}
+@utility hit-area-y {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: min(0px, calc((100% - 44px) / 2)) 0;
+  }
 }
 
 /*

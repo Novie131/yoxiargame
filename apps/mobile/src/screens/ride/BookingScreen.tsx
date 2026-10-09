@@ -221,7 +221,7 @@ export function BookingScreen() {
               <button
                 type="button"
                 onClick={() => void requestLocation()}
-                className="mt-0.5 text-[12px] font-medium text-primary"
+                className="hit-area mt-0.5 text-[12px] font-medium text-primary"
               >
                 {status === 'denied' ? '定位被拒絕，點此重試' : '尚未取得定位，點此開啟'}
               </button>
@@ -231,7 +231,7 @@ export function BookingScreen() {
             type="button"
             aria-label="編輯上車位置"
             onClick={() => void requestLocation()}
-            className="mt-1.5 shrink-0"
+            className="hit-area mt-1.5 shrink-0"
           >
             <PencilIcon />
           </button>
