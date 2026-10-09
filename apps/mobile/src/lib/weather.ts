@@ -1,6 +1,7 @@
+import type { Weather, WeatherAdvice, WeatherOutlook } from '@api/services/weather.ts'
 import { useEffect, useState } from 'react'
 
-import { API_URL } from './api'
+import { api, errorOf } from './client'
 import { useLocationState, type UserLocation } from './location'
 
 /*
@@ -13,45 +14,12 @@ import { useLocationState, type UserLocation } from './location'
  * 並標記 precise=false —— 畫面上要讓使用者知道那不是他真正的所在地。
  */
 
-export type WeatherAdvice = {
-  kind: 'umbrella' | 'heat' | 'cold' | 'uv' | 'clothing' | 'swing'
-  title: string
-  body: string
-}
-
-/** 往後幾小時的預報摘要。回答「等一下出門會不會下雨」靠它。 */
-export type WeatherOutlook = {
-  hours: number
-  minTemperatureC: number
-  maxTemperatureC: number
-  maxPrecipitationProbability: number
-  /** HH:MM，整段都不會下就是 null */
-  rainStartsAt: string | null
-  maxUvIndex: number
-}
-
-export type Weather = {
-  city: string | null
-  district: string | null
-  location: string | null
-  temperatureC: number
-  feelsLikeC: number
-  humidity: number
-  condition: string
-  isDay: boolean
-  precipitationMm: number
-  uvIndex: number
-  uvLevel: string
-  /*
-   * 首頁標題列那張小卡用的「最值得講的一件事」，沒有事就是 null。
-   * 後端刻意把穿著建議排除在外 —— 它每天都有，放進來這張卡就永遠都在。
-   */
-  advice: WeatherAdvice | null
-  /** 全部提醒，含穿著建議 */
-  advices: WeatherAdvice[]
-  outlook: WeatherOutlook | null
-  observedAt: string
-}
+/*
+ * 形狀直接用後端的（services/weather.ts）。
+ * advice 是首頁標題列那張小卡用的「最值得講的一件事」，沒有事就是 null；
+ * 後端刻意把穿著建議排除在外 —— 它每天都有，放進來這張卡就永遠都在。
+ */
+export type { Weather, WeatherAdvice, WeatherOutlook }
 
 export type WeatherState =
   | { status: 'loading' }
@@ -80,16 +48,15 @@ function fresh(s: Snapshot | null, key: string): s is Snapshot {
 }
 
 async function load(location: UserLocation, key: string): Promise<Snapshot> {
-  const res = await fetch(`${API_URL}/weather?lat=${location.lat}&lon=${location.lon}`)
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null)
-    throw new Error(detail?.error ?? `伺服器回應 ${res.status}`)
-  }
+  const res = await api.weather.$get({
+    query: { lat: String(location.lat), lon: String(location.lon) },
+  })
+  if (!res.ok) throw await errorOf(res)
 
   return {
     at: Date.now(),
     key,
-    weather: (await res.json()) as Weather,
+    weather: await res.json(),
     precise: location.precise,
   }
 }

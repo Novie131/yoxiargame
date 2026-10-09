@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
-import { API_URL } from './api'
-import { userHeaders } from './userRef'
+import { api } from './client'
 
 /*
  * 使用者選的興趣標籤。
@@ -77,11 +76,7 @@ function subscribe(listener: () => void) {
 }
 
 function syncToServer(interests: string[]) {
-  void fetch(`${API_URL}/me/preferences`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...userHeaders() },
-    body: JSON.stringify({ interests }),
-  }).catch(() => {
+  void api.me.preferences.$put({ json: { interests } }).catch(() => {
     /*
      * 同步失敗不影響篩選（那是本機做的），只影響主動推薦。
      * 不重試 —— 下次使用者改動興趣時就會再送一次。

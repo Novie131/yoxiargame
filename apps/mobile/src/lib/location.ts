@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
-import { API_URL } from './api'
+import { api } from './client'
 
 /*
  * 使用者位置。
@@ -214,9 +214,9 @@ export async function lookupPlace(
   const q = query.trim()
   if (!q) return null
 
-  const res = await fetch(`${API_URL}/geocode?q=${encodeURIComponent(q)}`)
+  const res = await api.geocode.$get({ query: { q } })
   if (!res.ok) return null
-  return (await res.json()) as { lat: number; lon: number; name: string }
+  return res.json()
 }
 
 /** 使用者手動指定所在地。會存起來，下次開 App 還在。 */

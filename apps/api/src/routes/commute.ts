@@ -1,5 +1,4 @@
-import { Hono, type MiddlewareHandler } from 'hono'
-import { validator } from 'hono/validator'
+import { Hono } from 'hono'
 
 import {
   DEFAULT_ROUTE_LABEL,
@@ -18,6 +17,7 @@ import {
 } from '../services/commute.ts'
 import { planDeparture } from '../services/departure.ts'
 import { isBusCity } from '../services/tdx.ts'
+import { fail, json, ok, query, type Parsed } from './validate.ts'
 
 /*
  * 通勤路線。
@@ -70,14 +70,7 @@ export type RouteBody = {
   arriveBy?: string | null
 }
 
-type Parsed<T> = { ok: true; value: T } | { ok: false; error: string }
-
 const LABEL_ERROR = `label 必須是 ${ROUTE_LABELS.join('、')} 其中之一`
-
-/** 同一個參數帶兩次時 Hono 給的是陣列，跟 c.req.query() 一樣取第一個 */
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value
-}
 
 /*
  * 路線的 label 從查詢參數讀，沒給就是上班那條。
@@ -85,47 +78,16 @@ function first(value: string | string[] | undefined): string | undefined {
  * 值不合法時**不要**默默退回預設 —— 使用者以為自己在改回家那條，
  * 結果改掉了上班那條，而畫面上完全看不出來。照實回 400。
  */
-const labelQuery = validator('query', (query, c) => {
-  const value = first(query.label)
-  if (value === undefined || value === '') return { label: DEFAULT_ROUTE_LABEL }
-  if (!isRouteLabel(value)) return c.json({ error: LABEL_ERROR }, 400)
-  return { label: value }
+const labelQuery = query<{ label?: RouteLabel }, { label: RouteLabel }>(({ label }) => {
+  if (label === undefined || label === '') return ok({ label: DEFAULT_ROUTE_LABEL })
+  return isRouteLabel(label) ? ok({ label }) : fail(LABEL_ERROR)
 })
 
 /* 讀取用：不帶 label 是「全部」，所以不補預設；帶了空字串則照舊視為不合法 */
-const optionalLabelQuery = validator('query', (query, c): { label?: RouteLabel } | Response => {
-  const value = first(query.label)
-  if (value === undefined) return {}
-  if (!isRouteLabel(value)) return c.json({ error: LABEL_ERROR }, 400)
-  return { label: value }
+const optionalLabelQuery = query<{ label?: RouteLabel }, { label?: RouteLabel }>(({ label }) => {
+  if (label === undefined) return ok({})
+  return isRouteLabel(label) ? ok({ label }) : fail(LABEL_ERROR)
 })
-
-/*
- * JSON body 驗證。
- *
- * 不用 hono/validator 的 'json'，因為它沒辦法把兩個型別分開：
- *   In  —— 前端（hc）送出時看到的型別，欄位可以省略
- *   Out —— handler 用 c.req.valid('json') 拿到的、補過預設值的型別
- * 另外它在 JSON 壞掉時回的是純文字，這裡維持原本的 { error } 格式。
- */
-function jsonBody<In, Out extends object>(
-  parse: (body: unknown) => Parsed<Out>,
-): MiddlewareHandler<any, string, { in: { json: In }; out: { json: Out } }> {
-  return async (c, next) => {
-    let body: unknown
-    try {
-      body = await c.req.json()
-    } catch {
-      return c.json({ error: '請求內容不是合法的 JSON' }, 400)
-    }
-
-    const parsed = parse(body)
-    if (!parsed.ok) return c.json({ error: parsed.error }, 400)
-
-    c.req.addValidatedData('json', parsed.value)
-    await next()
-  }
-}
 
 /* 星期用小寫三字母，跟 Intl 的 weekday: 'short' 對齊，transit-watch 直接比對 */
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -151,22 +113,22 @@ function parseTime(value: unknown): string | null | undefined {
 
 function parseRouteBody(body: unknown): Parsed<ParsedRoute> {
   if (typeof body !== 'object' || body === null) {
-    return { ok: false, error: '請求內容格式錯誤' }
+    return fail('請求內容格式錯誤')
   }
 
   const { origin, destination, mode, line } = body as Record<string, unknown>
 
   if (typeof origin !== 'string' || !origin.trim()) {
-    return { ok: false, error: 'origin 是必填' }
+    return fail('origin 是必填')
   }
   if (typeof destination !== 'string' || !destination.trim()) {
-    return { ok: false, error: 'destination 是必填' }
+    return fail('destination 是必填')
   }
   if (origin.trim().length > MAX_NAME_LENGTH || destination.trim().length > MAX_NAME_LENGTH) {
-    return { ok: false, error: `站名不能超過 ${MAX_NAME_LENGTH} 個字` }
+    return fail(`站名不能超過 ${MAX_NAME_LENGTH} 個字`)
   }
   if (typeof mode !== 'string' || !MODES.includes(mode as TransportMode)) {
-    return { ok: false, error: `mode 必須是 ${MODES.join('、')} 其中之一` }
+    return fail(`mode 必須是 ${MODES.join('、')} 其中之一`)
   }
 
   const { city, usualDays, usualTimeStart, usualTimeEnd, arriveBy } = body as Record<
@@ -177,26 +139,26 @@ function parseRouteBody(body: unknown): Parsed<ParsedRoute> {
   /* 公車的城市代碼要對得上 TDX，打錯的話之後查不到任何東西且不會有錯誤 */
   if (city !== undefined && city !== null && city !== '') {
     if (typeof city !== 'string' || !isBusCity(city)) {
-      return { ok: false, error: `不支援的縣市代碼「${String(city)}」` }
+      return fail(`不支援的縣市代碼「${String(city)}」`)
     }
   }
 
   const days = parseDays(usualDays)
   if (days === null) {
-    return { ok: false, error: `usualDays 只接受 ${DAYS.join('、')}` }
+    return fail(`usualDays 只接受 ${DAYS.join('、')}`)
   }
 
   const start = parseTime(usualTimeStart)
   const end = parseTime(usualTimeEnd)
   if (start === undefined || end === undefined) {
-    return { ok: false, error: '時間格式必須是 HH:MM（24 小時制）' }
+    return fail('時間格式必須是 HH:MM（24 小時制）')
   }
   /*
    * 只給一邊沒有意義 —— 「從 08:00 開始通知」到什麼時候？
    * 與其自己補一個結束時間，不如要求成對，讓意圖是明確的。
    */
   if ((start === null) !== (end === null)) {
-    return { ok: false, error: 'usualTimeStart 與 usualTimeEnd 必須成對提供' }
+    return fail('usualTimeStart 與 usualTimeEnd 必須成對提供')
   }
 
   /*
@@ -205,32 +167,29 @@ function parseRouteBody(body: unknown): Parsed<ParsedRoute> {
    */
   const arrive = parseTime(arriveBy)
   if (arrive === undefined) {
-    return { ok: false, error: 'arriveBy 格式必須是 HH:MM（24 小時制）' }
+    return fail('arriveBy 格式必須是 HH:MM（24 小時制）')
   }
 
-  return {
-    ok: true,
-    value: {
-      origin: origin.trim(),
-      destination: destination.trim(),
-      mode: mode as TransportMode,
-      /* 沒給就讓 service 從起訖站推，不要在這裡填預設值 */
-      line: typeof line === 'string' && line.trim() ? line.trim() : null,
-      city: typeof city === 'string' && city.trim() ? city.trim() : null,
-      usualDays: days,
-      usualTimeStart: start,
-      usualTimeEnd: end,
-      arriveBy: arrive,
-    },
-  }
+  return ok({
+    origin: origin.trim(),
+    destination: destination.trim(),
+    mode: mode as TransportMode,
+    /* 沒給就讓 service 從起訖站推，不要在這裡填預設值 */
+    line: typeof line === 'string' && line.trim() ? line.trim() : null,
+    city: typeof city === 'string' && city.trim() ? city.trim() : null,
+    usualDays: days,
+    usualTimeStart: start,
+    usualTimeEnd: end,
+    arriveBy: arrive,
+  })
 }
 
 function parseNotificationBody(body: unknown): Parsed<{ notificationEnabled: boolean }> {
   const { notificationEnabled } = (body ?? {}) as { notificationEnabled?: unknown }
   if (typeof notificationEnabled !== 'boolean') {
-    return { ok: false, error: 'notificationEnabled 必須是布林值' }
+    return fail('notificationEnabled 必須是布林值')
   }
-  return { ok: true, value: { notificationEnabled } }
+  return ok({ notificationEnabled })
 }
 
 export const commuteRoutes = new Hono()
@@ -268,7 +227,7 @@ export const commuteRoutes = new Hono()
     }
   })
 
-  .post('/route', labelQuery, jsonBody<RouteBody, ParsedRoute>(parseRouteBody), async (c) => {
+  .post('/route', labelQuery, json<RouteBody, ParsedRoute>(parseRouteBody), async (c) => {
     const userRef = readUserRef(c.req.header('X-User-Ref'))
     const { label } = c.req.valid('query')
 
@@ -293,9 +252,7 @@ export const commuteRoutes = new Hono()
   .patch(
     '/route',
     labelQuery,
-    jsonBody<{ notificationEnabled: boolean }, { notificationEnabled: boolean }>(
-      parseNotificationBody,
-    ),
+    json<{ notificationEnabled: boolean }, { notificationEnabled: boolean }>(parseNotificationBody),
     async (c) => {
       const userRef = readUserRef(c.req.header('X-User-Ref'))
       const { label } = c.req.valid('query')

@@ -1,7 +1,9 @@
+import type { LegTiming, ServiceState } from '@api/services/metro-schedule.ts'
+import type { MetroFare, StationAccessibility } from '@api/services/tdx.ts'
+import type { InferResponseType } from 'hono/client'
 import { useEffect, useState } from 'react'
 
-import { API_URL } from './api'
-import type { RideEstimate } from './ride'
+import { api } from './client'
 
 /*
  * 捷運路徑規劃，資料來自後端的 /transit/plan。
@@ -13,102 +15,18 @@ import type { RideEstimate } from './ride'
  * 前端也不需要特別節流。
  */
 
-export type RouteLeg = {
-  line: string
-  lineId: string
-  from: string
-  to: string
-  stops: number
-  minutes: number
-}
+/*
+ * /transit/plan 的回應是在 routes/transit.ts 裡當場組出來的，後端沒有一個具名型別，
+ * 所以直接從 API 的型別推。各欄位的意思見那支端點的註解。
+ */
+export type RoutePlan = InferResponseType<typeof api.transit.plan.$get, 200>
 
-/** 捷運此刻的營運狀態。形狀跟後端的 ServiceState 一致。 */
-export type MetroService =
-  | { status: 'running' | 'unknown' }
-  | { status: 'closed'; station: string; line: string; firstTrain: string; lastTrain: string }
-  /*
-   * 還有車，但末班車就在 30 分鐘內。
-   *
-   * minutesLeft 是**末班車到站**的時間，不含走到車站要花的時間 ——
-   * 畫面上一定要講清楚是哪一種，不然「還有 8 分鐘」會被讀成
-   * 「你還有 8 分鐘可以出門」，那是一個會讓人趕去車站然後撲空的誤會。
-   */
-  | {
-      status: 'closing-soon'
-      station: string
-      line: string
-      /** 這個方向的終點站。末班車分方向，不講方向的倒數沒有意義。 */
-      towards: string
-      minutesLeft: number
-      firstTrain: string
-      lastTrain: string
-    }
-
-/** 捷運票價。後端查不到時整個是 null，不要用距離推一個。 */
-export type MetroFare = {
-  /** 單程票全票（元） */
-  singleJourney: number
-  /*
-   * 這是哪一種票。要跟數字一起顯示 —— TDX 只公告單程票，
-   * 悠遊卡實際上有折扣，少了這句話使用者會以為這就是他會付的錢。
-   */
-  basis: string
-}
-
-/** 一站的無障礙資訊。形狀跟後端的 StationAccessibility 一致。 */
-export type StationFacility = {
-  stationId: string
-  /*
-   * 三態，一定要分得出來：
-   *   true  有登錄、而且有電梯出口
-   *   false 有登錄、但沒有電梯出口
-   *   null  TDX 沒有登錄 —— 我們不知道，畫面要寫「查無資料」
-   */
-  hasElevator: boolean | null
-  elevatorExits: Array<{
-    exitId: string
-    name: string
-    elevator: boolean | null
-    escalator: boolean | null
-    locationDescription: string | null
-  }>
-  exitCount: number
-}
-
-export type AccessibilityPoint = {
-  /** transfer = 轉乘站，exit = 出站的那一站 */
-  role: 'transfer' | 'exit'
-  station: string
-  stationId: string
-  /** null 代表查不到，不是「沒有電梯」 */
-  facility: StationFacility | null
-}
-
-export type RoutePlan = {
-  from: string
-  to: string
-  /** 車程 + 轉乘步行 + 依真實班距估算的等車 */
-  totalMinutes: number
-  /** 只有車程與轉乘站內步行 */
-  rideMinutes: number
-  /** 等車的期望值。班距拿不到時為 0。 */
-  waitMinutes: number
-  transfers: number
-  legs: RouteLeg[]
-  /** 現在是不是尖峰 */
-  peak: boolean
-  service: MetroService
-  /** 公告票價。查不到就是 null，畫面就不顯示票價那一行。 */
-  fare: MetroFare | null
-  /*
-   * 收班／快收班時的叫車估價。其他時候是 null ——
-   * 每次查路線都附一個叫車價，就是在推銷。
-   * 依公告費率估算，不是 yoxi 報價，basis 要一起顯示。
-   */
-  rideFallback: RideEstimate | null
-  /** 只有帶 accessibility=1 查詢時才有值 */
-  accessibility: AccessibilityPoint[] | null
-}
+/* 其他部分後端都有具名型別，用那些 —— 欄位說明（尤其是三態的 null）都在那邊 */
+export type RouteLeg = LegTiming
+export type MetroService = ServiceState
+export type { MetroFare }
+export type StationFacility = StationAccessibility
+export type AccessibilityPoint = NonNullable<RoutePlan['accessibility']>[number]
 
 export type PlanState =
   | { status: 'idle' }
@@ -165,13 +83,11 @@ export function useRoutePlan(
     if (fresh(key)) return
 
     let alive = true
-    fetch(
-      `${API_URL}/transit/plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` +
-        (accessibility ? '&accessibility=1' : ''),
-    )
+    api.transit.plan
+      .$get({ query: accessibility ? { from, to, accessibility: '1' } : { from, to } })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
-        return (await res.json()) as RoutePlan
+        return res.json()
       })
       .then((plan) => {
         cache.set(key, { at: Date.now(), plan })

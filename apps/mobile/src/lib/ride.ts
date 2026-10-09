@@ -1,6 +1,7 @@
+import type { RideEstimate } from '@api/services/ride.ts'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 
-import { API_URL } from './api'
+import { api, coordsQuery } from './client'
 import { lookupPlace } from './location'
 
 /*
@@ -29,17 +30,8 @@ export type RidePlace = {
   lon: number
 }
 
-/** 對應後端 services/ride.ts 的 RideEstimate */
-export type RideEstimate = {
-  distanceKm: number
-  durationMinutes: number
-  eta: string
-  fare: { min: number; max: number }
-  traffic: 'peak' | 'offPeak' | 'night'
-  nightSurcharge: boolean
-  /** 這些數字怎麼來的。畫面上一定要顯示，不要只留數字。 */
-  basis: string
-}
+/* 估價的形狀直接用後端的（services/ride.ts）。basis 一定要顯示，理由在那邊的註解。 */
+export type { RideEstimate }
 
 export type Driver = {
   name: string
@@ -146,17 +138,13 @@ const DEMO_DROPOFF: RidePlace = { label: '臺北101', lat: 25.0338, lon: 121.564
 
 export async function startDemoRide(): Promise<boolean> {
   try {
-    const url =
-      `${API_URL}/ride/estimate?fromLat=${DEMO_PICKUP.lat}&fromLon=${DEMO_PICKUP.lon}` +
-      `&toLat=${DEMO_DROPOFF.lat}&toLon=${DEMO_DROPOFF.lon}`
-
-    const res = await fetch(url)
+    const res = await api.ride.estimate.$get({ query: coordsQuery(DEMO_PICKUP, DEMO_DROPOFF) })
     if (!res.ok) return false
 
     startRide({
       pickup: DEMO_PICKUP,
       dropoff: DEMO_DROPOFF,
-      estimate: (await res.json()) as RideEstimate,
+      estimate: await res.json(),
       carType: '轎車',
     })
     return true
@@ -329,14 +317,11 @@ export function useRideEstimate(
     if (hit && Date.now() - hit.at < TTL_MS) return
 
     let alive = true
-    const url =
-      `${API_URL}/ride/estimate?fromLat=${from.lat}&fromLon=${from.lon}` +
-      `&toLat=${to.lat}&toLon=${to.lon}`
-
-    fetch(url)
+    api.ride.estimate
+      .$get({ query: coordsQuery(from, to) })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
-        return (await res.json()) as RideEstimate
+        return res.json()
       })
       .then((data) => {
         cache.set(key, { at: Date.now(), data })

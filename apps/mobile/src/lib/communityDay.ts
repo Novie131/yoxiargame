@@ -1,8 +1,8 @@
+import type { Itinerary, ItineraryLeg } from '@api/services/community-day.ts'
 import { useEffect, useState } from 'react'
 
-import { API_URL } from './api'
-import type { RideEstimate } from './ride'
-import { userHeaders } from './userRef'
+import { api } from './client'
+import type { Mission } from './missions'
 
 /*
  * 社群日的行程，資料來自後端的 /campaigns/today。
@@ -17,38 +17,8 @@ import { userHeaders } from './userRef'
  * 沒有即時位置，做不了共乘媒合。畫面上不要寫成「附近有 N 人可共乘」。
  */
 
-export type ItineraryLeg = {
-  order: number
-  mission: {
-    id: string
-    name: string
-    lat: number
-    lon: number
-    radiusMeters: number
-    tags: string[]
-    completed: boolean
-  }
-  distanceMeters: number
-  /** 建議用走的還是叫車 */
-  mode: 'walk' | 'ride'
-  walkMinutes: number
-  /** mode 為 ride 時才有。依公告費率估算，basis 要一起顯示。 */
-  ride: RideEstimate | null
-}
-
-export type Itinerary = {
-  campaignId: string
-  name: string
-  endsAt: string | null
-  /** 今天完成過這場活動任務的人數。是熱度，不是可共乘的人。 */
-  participantsToday: number
-  remaining: number
-  completed: number
-  legs: ItineraryLeg[]
-  totalWalkMinutes: number
-  /** 這條行程怎麼算出來的。要原封不動顯示。 */
-  basis: string
-}
+/* 行程的形狀直接用後端的（services/community-day.ts），欄位說明都在那裡 */
+export type { Itinerary, ItineraryLeg }
 
 export type CommunityDayState =
   | { status: 'loading' }
@@ -75,13 +45,14 @@ export function useCommunityDay(
     let alive = true
     const [lat, lon] = key.split(',')
 
-    fetch(`${API_URL}/campaigns/today?lat=${lat}&lon=${lon}`, { headers: userHeaders() })
+    api.campaigns.today
+      .$get({ query: { lat, lon } })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
-        return (await res.json()) as { day?: Itinerary | null }
+        return res.json()
       })
       .then((body) => {
-        if (alive) setState({ status: 'ready', day: body.day ?? null })
+        if (alive) setState({ status: 'ready', day: body.day })
       })
       .catch(() => {
         /* 活動是輔助內容，拿不到就不顯示，不要擋住探索頁 */
@@ -95,6 +66,31 @@ export function useCommunityDay(
 
   if (!key) return { status: 'ready', day: null }
   return state
+}
+
+/**
+ * 行程裡的一站 → 探索地圖用的 Mission。
+ *
+ * 社群日的點可能超出地圖目前的搜尋半徑，探索頁要把它們跟附近任務放在一起監看圍欄、
+ * 開任務面板，所以需要同一個形狀。
+ */
+export function missionOfLeg(leg: ItineraryLeg, campaign: string): Mission {
+  return {
+    ...leg.mission,
+    campaign,
+    /*
+     * distanceMeters / inside 填 0 / false 沒關係 ——
+     * 圍欄判定與 MissionSheet 一律用使用者的即時座標重算（lib/missions 的 missionRelativeTo），
+     * 不信任這兩個欄位（那是相對於查詢座標算的）。
+     */
+    distanceMeters: 0,
+    inside: false,
+    status: leg.mission.completed ? 'completed' : null,
+    completedAt: null,
+    /* 任務自己的時間範圍行程裡沒有；活動的結束時間在 Itinerary.endsAt，這裡不混用 */
+    startsAt: null,
+    endsAt: null,
+  }
 }
 
 /** 活動還剩多久（分鐘）。已結束或沒有結束時間時回 null。 */

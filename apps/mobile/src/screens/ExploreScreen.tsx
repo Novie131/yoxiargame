@@ -11,7 +11,7 @@ import { MapPinIcon } from '@/components/icons'
 import { TaskProgress } from '@/components/TaskProgress'
 import { INTERESTS, toggleInterest, useInterests } from '@/lib/interests'
 import { FALLBACK_LABEL, useUserLocation } from '@/lib/location'
-import { useCommunityDay } from '@/lib/communityDay'
+import { missionOfLeg, useCommunityDay } from '@/lib/communityDay'
 import { useGeofenceWatch } from '@/lib/geofence'
 import { useNearbyMissions, type Mission } from '@/lib/missions'
 import { CITIES } from '@/lib/map'
@@ -119,15 +119,7 @@ export function ExploreScreen() {
     for (const leg of day?.legs ?? []) {
       if (seen.has(leg.mission.id)) continue
       seen.add(leg.mission.id)
-      extra.push({
-        ...leg.mission,
-        campaign: day?.name ?? '',
-        /* 這兩欄圍欄判定用不到 —— 它自己用使用者的即時座標重算 */
-        distanceMeters: 0,
-        inside: false,
-        status: leg.mission.completed ? ('completed' as const) : null,
-        completedAt: null,
-      })
+      extra.push(missionOfLeg(leg, day?.name ?? ''))
     }
     return [...missions, ...extra]
   }, [missions, communityDay])
@@ -152,19 +144,7 @@ export function ExploreScreen() {
       const leg = day?.legs.find((l) => l.mission.id === selectedMissionId)
       if (!day || !leg) return null
 
-      return {
-        ...leg.mission,
-        campaign: day.name,
-        /*
-         * distanceMeters / inside 這裡填 0 / false 沒關係 ——
-         * MissionSheet 一律用 missionRelativeTo 以使用者的真實位置重算，
-         * 不信任這兩個欄位（那是相對於查詢座標算的，見 lib/missions 的註解）。
-         */
-        distanceMeters: 0,
-        inside: false,
-        status: leg.mission.completed ? ('completed' as const) : null,
-        completedAt: null,
-      }
+      return missionOfLeg(leg, day.name)
     })()
 
   /*

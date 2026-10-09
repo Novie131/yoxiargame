@@ -1,7 +1,7 @@
+import type { Notification } from '@api/db/repositories/notifications.ts'
 import { useEffect, useSyncExternalStore } from 'react'
 
-import { API_URL } from './api'
-import { userHeaders } from './userRef'
+import { api } from './client'
 
 /*
  * 通知收件匣。
@@ -15,17 +15,8 @@ import { userHeaders } from './userRef'
  * 這不影響現在的設計：真要加的時候，資料層就是這一套，只是多一個送達管道。
  */
 
-export type AppNotification = {
-  id: string
-  kind: string
-  title: string
-  body: string
-  /** 點下去要去哪，例如 /ride/estimate?from=…&to=… */
-  actionRoute: string | null
-  actionLabel: string | null
-  createdAt: string
-  read: boolean
-}
+/* 形狀直接用後端的。名字維持 AppNotification：Notification 是瀏覽器內建的全域型別 */
+export type AppNotification = Notification
 
 type State = {
   notifications: AppNotification[]
@@ -67,10 +58,11 @@ export function refresh(): Promise<void> {
   if (inflight) return inflight
 
   patch({ loading: true })
-  inflight = fetch(`${API_URL}/notifications`, { headers: userHeaders() })
+  inflight = api.notifications
+    .$get()
     .then(async (res) => {
       if (!res.ok) throw new Error(`伺服器回應 ${res.status}`)
-      const body = (await res.json()) as { notifications?: unknown; unreadCount?: unknown }
+      const body = await res.json()
       const notifications = Array.isArray(body.notifications)
         ? body.notifications.filter(isNotification)
         : []
@@ -110,11 +102,7 @@ export async function markRead(id?: string): Promise<void> {
   })
 
   try {
-    await fetch(`${API_URL}/notifications/read`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...userHeaders() },
-      body: JSON.stringify(id ? { id } : {}),
-    })
+    await api.notifications.read.$post({ json: id ? { id } : {} })
   } catch {
     /* 送不出去就下次 refresh 時自己修正回來 */
   }

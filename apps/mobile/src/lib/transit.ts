@@ -1,6 +1,7 @@
+import type { MetroStatus } from '@api/services/tdx.ts'
 import { useEffect, useState } from 'react'
 
-import { API_URL } from './api'
+import { api, errorOf } from './client'
 
 /*
  * 捷運即時營運狀態。資料來自後端的 /transit/metro，後端再打 TDX。
@@ -13,22 +14,9 @@ import { API_URL } from './api'
  * 不要讓通勤畫面因為外部服務掛掉而整頁壞掉。
  */
 
-export type MetroIncident = {
-  title: string
-  description: string
-  updatedAt: string
-}
-
-export type MetroStatus = {
-  line: string
-  lineId: string
-  status: 'normal' | 'alert'
-  delayMinutes: null
-  incidents: MetroIncident[]
-  arrivingNow: Array<{ station: string; heading: string }>
-  note: string
-  observedAt: string
-}
+/* 形狀直接用後端的。delayMinutes 永遠是 null —— 畫面不要承諾「誤點 N 分」 */
+export type { MetroStatus }
+export type MetroIncident = MetroStatus['incidents'][number]
 
 export type MetroState =
   | { status: 'loading' }
@@ -48,12 +36,9 @@ function fresh(s: Snapshot | undefined): s is Snapshot {
 }
 
 async function load(line: string): Promise<Snapshot> {
-  const res = await fetch(`${API_URL}/transit/metro?line=${encodeURIComponent(line)}`)
-  if (!res.ok) {
-    const detail = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new Error(detail?.error ?? `伺服器回應 ${res.status}`)
-  }
-  return { at: Date.now(), metro: (await res.json()) as MetroStatus }
+  const res = await api.transit.metro.$get({ query: { line } })
+  if (!res.ok) throw await errorOf(res)
+  return { at: Date.now(), metro: await res.json() }
 }
 
 /* 同一條路線同時被多個元件要時，只實際打一次 */

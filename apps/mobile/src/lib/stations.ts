@@ -1,6 +1,7 @@
+import type { MetroStation } from '@api/services/tdx.ts'
 import { useEffect, useState } from 'react'
 
-import { API_URL } from './api'
+import { api } from './client'
 
 /*
  * 捷運站名建議，資料來自後端的 /transit/stations（後端再打 TDX）。
@@ -12,12 +13,8 @@ import { API_URL } from './api'
  * 只要擋住「打字打到一半就送出去的舊請求蓋掉新結果」即可。
  */
 
-export type Station = {
-  stationId: string
-  name: string
-  /** 這一站經過的路線名，轉乘站會有多條 */
-  lines: string[]
-}
+/** 形狀直接用後端的。lines 是這一站經過的路線名，轉乘站會有多條。 */
+export type Station = MetroStation
 
 /* 輸入變動到送出請求之間的等待。純粹是少打幾次，不是配額問題。 */
 const DEBOUNCE_MS = 250
@@ -40,10 +37,14 @@ export function useStationSuggestions(query: string): Station[] {
 
     let alive = true
     const timer = setTimeout(() => {
-      fetch(`${API_URL}/transit/stations?q=${encodeURIComponent(q)}`)
-        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-        .then((body: { stations?: Station[] }) => {
-          if (alive) setResult({ query: q, stations: body.stations ?? [] })
+      api.transit.stations
+        .$get({ query: { q } })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(String(res.status))
+          return res.json()
+        })
+        .then((body) => {
+          if (alive) setResult({ query: q, stations: body.stations })
         })
         .catch(() => {
           /*

@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
-import { API_URL } from './api'
-import { userHeaders } from './userRef'
+import { api, errorOf } from './client'
 
 /*
  * 「優先顯示無障礙路線」的偏好。
@@ -54,9 +53,9 @@ function writeCache(value: boolean) {
 let refreshed = false
 
 async function fetchPreference(): Promise<boolean | null> {
-  const res = await fetch(`${API_URL}/me/preferences`, { headers: userHeaders() })
+  const res = await api.me.preferences.$get()
   if (!res.ok) return null
-  const body = (await res.json()) as { accessibilityPriority?: unknown }
+  const body = await res.json()
   return typeof body.accessibilityPriority === 'boolean' ? body.accessibilityPriority : null
 }
 
@@ -74,15 +73,8 @@ export async function setAccessibilityPriority(value: boolean): Promise<void> {
   emit()
 
   try {
-    const res = await fetch(`${API_URL}/me/preferences`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...userHeaders() },
-      body: JSON.stringify({ accessibilityPriority: value }),
-    })
-    if (!res.ok) {
-      const detail = (await res.json().catch(() => null)) as { error?: string } | null
-      throw new Error(detail?.error ?? `伺服器回應 ${res.status}`)
-    }
+    const res = await api.me.preferences.$put({ json: { accessibilityPriority: value } })
+    if (!res.ok) throw await errorOf(res)
   } catch (error) {
     enabled = previous
     writeCache(previous)
