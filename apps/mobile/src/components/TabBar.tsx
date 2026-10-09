@@ -85,11 +85,15 @@ export function TabBar() {
           * 所以它不會蓋到任何東西，也不需要誰為它讓開。
           *
           * 用 Link 而不是 NavLink：它的去處會變，「現在是否選中」對它沒有意義。
+          *
+          * gridRowStart: 1 不能省。它在 DOM 裡排在第 5 格之後，只指定欄的話，
+          * 格線的自動排列遇到「欄號比前一個小」會換到下一列 ——
+          * 這顆鈕就會被放到第 2 列，掉出固定高度的 tab bar 外面。
           */}
         <Link
           to={centerTo}
           aria-label={onAgent ? '叫車' : 'yoxi 助理'}
-          style={{ gridColumnStart: 3, background: 'var(--color-brand-red)' }}
+          style={{ gridColumnStart: 3, gridRowStart: 1, background: 'var(--color-brand-red)' }}
           /*
            * h-12（48px）在 h-14（56px）的列裡上下各留 4px，比圖示大一圈
            * 但不會頂到邊。陰影只用中性墨色表達高度 ——
