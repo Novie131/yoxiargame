@@ -31,8 +31,11 @@ export function GeofenceToast({
       /*
        * 蓋在 tab bar 上方。fixed 而不是 absolute —— 它要浮在整個畫面之上，
        * 不受探索頁捲動位置影響。
+       *
+       * 72px 是 tab bar（56px）加間距；有 home indicator 的 iPhone 上
+       * tab bar 會再被 safe-bottom 墊高，這裡要跟著加，不然會疊到 tab bar 上。
        */
-      className="fixed inset-x-0 bottom-[72px] z-40 px-4"
+      className="fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom,0px))] z-40 px-4"
       role="status"
     >
       <div className="mx-auto flex max-w-shell items-center gap-3 rounded-2xl bg-ink px-4 py-3 shadow-[0_6px_20px_rgba(22,32,55,.28)]">

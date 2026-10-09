@@ -18,6 +18,7 @@ import { TabBar } from './TabBar'
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
   const native = Capacitor.isNativePlatform()
+  const tabBar = hasTabBar(pathname)
 
   return (
     <div
@@ -28,11 +29,18 @@ export function AppShell({ children }: { children: ReactNode }) {
          * 只補 safe-top 的話內容會被切掉一條。
          */
         native ? 'safe-top safe-x' : '',
+        /*
+         * 底部的 home indicator 平常由 tab bar 的 safe-bottom 讓開。
+         * 沒有 tab bar 的頁面（預估車資）就得由手機殼自己讓，
+         * 否則貼底的 CTA 會壓在 home indicator 底下。
+         * 網頁版也要：index.html 有 viewport-fit=cover，內容本來就會鋪到那裡。
+         */
+        tabBar ? '' : 'safe-bottom',
       ].join(' ')}
     >
       <StatusBar />
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">{children}</main>
-      {hasTabBar(pathname) && <TabBar />}
+      {tabBar && <TabBar />}
     </div>
   )
 }

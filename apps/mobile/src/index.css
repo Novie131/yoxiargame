@@ -56,10 +56,14 @@
 
 /*
  * 矮螢幕：手機轉橫向。
- * 直向手機最矮的也有 568px（iPhone SE 一代），所以 500 以下只會是橫向。
  * 這時候高度才是稀缺資源，要讓版面改成可以捲動，而不是把東西擠扁。
+ *
+ * 一定要同時判斷 orientation —— 只看高度會誤判小手機的直向：
+ * 568px 是 iPhone SE 一代的「螢幕」高度，但 Safari 扣掉網址列與工具列之後，
+ * 網頁實際拿到的只有約 460px。曾經只寫 max-height: 500px，
+ * 結果 SE 直向也套上橫向版面，預估車資頁的 CTA 被地圖保底高度擠出畫面（踩過）。
  */
-@custom-variant short (@media (max-height: 500px));
+@custom-variant short (@media (max-height: 500px) and (orientation: landscape));
 
 html,
 body,
