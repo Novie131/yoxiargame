@@ -1,5 +1,6 @@
 import { stepCountIs, streamText, type ModelMessage } from 'ai'
 
+import { hasDatabase } from '../db/client.ts'
 import type { TransportMode } from '../db/repositories/commute.ts'
 import { FALLBACK_USER_REF } from '../identity.ts'
 import type { UserLocation } from '../services/place.ts'
@@ -121,7 +122,19 @@ function locationSection(location?: UserLocation | null): string {
   在使用者沒明講另一個地點時，一律**不要帶**那個參數，系統會自動用這個位置。`
 }
 
-const systemFor = (location?: UserLocation | null) => SYSTEM + locationSection(location)
+/*
+ * 沒接資料庫時 plan_itinerary 與 get_mission_progress 不會給模型（見 tools.ts），
+ * 但上面的規則還寫著它們。不講清楚的話，模型會去叫不存在的工具，或乾脆說「排好了」。
+ */
+const NO_COMMUNITY_DAY = `
+
+社群日活動（排行程、查進度）目前暫時無法使用，這一輪沒有 plan_itinerary 與 get_mission_progress。
+- 使用者問到時用一句話照實說暫時無法使用。不要說已經排好或查到了，
+  不要說附近沒有活動（沒查過，不知道），也不要推薦別的活動代替。
+- 不要提資料庫或系統設定，那是使用者處理不了的事。`
+
+const systemFor = (location?: UserLocation | null) =>
+  SYSTEM + locationSection(location) + (hasDatabase() ? '' : NO_COMMUNITY_DAY)
 
 export type ChatMessage = ModelMessage
 
@@ -1016,10 +1029,7 @@ export function toCards(toolName: string, output: unknown): AgentCard[] {
     )
   }
   if (toolName === 'plan_itinerary' || toolName === 'get_mission_progress') {
-    /*
-     * active: false（附近沒有活動）是常態不是錯誤；unavailable（沒接資料庫）是部署
-     * 設定的事，使用者處理不了。兩者都沒有卡片，讓模型用文字講。
-     */
+    /* active: false（附近沒有活動）是常態不是錯誤，沒有卡片，讓模型用文字講 */
     const failure = asString(o?.error)
     if (failure) return [{ kind: 'notice', message: failure }]
     return only(
