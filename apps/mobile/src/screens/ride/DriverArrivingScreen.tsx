@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
+import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import {
   ChatIcon,
@@ -13,6 +14,7 @@ import {
 } from '@/components/icons'
 import { requestLocation } from '@/lib/location'
 import { endRide, useActiveRide, useRideProgress } from '@/lib/ride'
+import { driverStartOf, useRideMapRoute } from '@/lib/rideMap'
 
 /*
  * 對應設計稿 frame：yoxi-driver-arriving（叫車 ③／司機前往中）
@@ -29,6 +31,33 @@ export function DriverArrivingScreen() {
   const navigate = useNavigate()
   const ride = useActiveRide()
   const progress = useRideProgress(ride)
+
+  /*
+   * 地圖：司機 → 上車點的路線（設計稿 yoxi-driver-arriving）。
+   * 司機的出發位置是模擬的（lib/rideMap），跟司機卡片一樣屬於「模擬派車」。
+   *
+   * hooks 要放在下面的 early return 之前，所以沒有行程時兩端給 null。
+   */
+  const pickupLat = ride?.pickup.lat
+  const pickupLon = ride?.pickup.lon
+  const pickupLabel = ride?.pickup.label
+  const plate = ride?.driver.plate
+  const pickupAt = useMemo(
+    () =>
+      pickupLat !== undefined && pickupLon !== undefined ? { lng: pickupLon, lat: pickupLat } : null,
+    [pickupLat, pickupLon],
+  )
+  const driverFrom = useMemo(() => (pickupAt ? driverStartOf(pickupAt) : null), [pickupAt])
+  const map = useRideMapRoute(driverFrom, pickupAt, { joinStart: false })
+  /* 車放在路線的第一個點 —— OSRM 會把出發點吸到道路上，車才不會停在路外 */
+  const carAt = map.driving?.coordinates[0] ?? driverFrom
+  const markers = useMemo<MapMarker[]>(
+    () => [
+      ...(pickupAt ? [{ id: 'pickup', position: pickupAt, label: pickupLabel, variant: 'origin' as const }] : []),
+      ...(carAt ? [{ id: 'driver', position: carAt, label: plate, variant: 'car' as const }] : []),
+    ],
+    [pickupAt, pickupLabel, carAt, plate],
+  )
 
   /* 沒有進行中的行程（重新整理、直接開這個網址）就回去叫車 */
   useEffect(() => {
@@ -55,13 +84,10 @@ export function DriverArrivingScreen() {
     <div className="flex h-full flex-col">
       <MapBackdrop
         center={ride.pickup}
-        markers={[
-          {
-            id: 'pickup',
-            position: { lng: ride.pickup.lon, lat: ride.pickup.lat },
-            label: ride.pickup.label,
-          },
-        ]}
+        markers={markers}
+        route={map.route}
+        fitBounds={map.fitBounds}
+        showUserLocation={false}
       >
         {/* 點這條可以不等倒數直接往下走 */}
         <button

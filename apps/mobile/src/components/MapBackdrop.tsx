@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { Map, type MapMarker } from './Map'
+import { Map, type FitPadding, type MapMarker, type MapRoute } from './Map'
 import { useUserLocation } from '@/lib/location'
 
 /*
@@ -17,6 +17,10 @@ export function MapBackdrop({
   zoom = 15,
   center,
   markers = [],
+  route,
+  fitBounds,
+  fitPadding,
+  showUserLocation = true,
   children,
 }: {
   /** 預設 15，大約是看得到街廓與路名的層級，適合叫車的取放點 */
@@ -28,6 +32,16 @@ export function MapBackdrop({
   center?: { lat: number; lon: number } | null
   /** 上車點與下車點 */
   markers?: MapMarker[]
+  /** 路線與要完整看到的範圍，見 Map 的同名參數 */
+  route?: MapRoute | null
+  fitBounds?: [number, number, number, number] | null
+  fitPadding?: FitPadding
+  /*
+   * 要不要畫「你在這裡」的藍點。
+   * 叫車流程四頁都自己畫上車點／目前位置，藍點會疊在同一個位置變成兩個點；
+   * 行程中那頁更糟 —— 車在模擬的路線上跑，藍點卻停在使用者真實的位置。
+   */
+  showUserLocation?: boolean
   children?: ReactNode
 }) {
   const location = useUserLocation()
@@ -52,8 +66,13 @@ export function MapBackdrop({
           center={{ lng: focus.lon, lat: focus.lat }}
           zoom={zoom}
           markers={markers}
+          route={route}
+          fitBounds={fitBounds}
+          fitPadding={fitPadding}
           /* 沒定位到就不畫藍點，只把視野放在預設位置（臺北市信義區） */
-          userLocation={location.precise ? { lng: location.lon, lat: location.lat } : null}
+          userLocation={
+            showUserLocation && location.precise ? { lng: location.lon, lat: location.lat } : null
+          }
           controls={false}
           className="h-full w-full"
         />

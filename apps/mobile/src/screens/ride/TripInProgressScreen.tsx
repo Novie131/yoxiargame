@@ -1,10 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
+import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { AlertIcon, ShieldIcon } from '@/components/icons'
+import { pointAlong } from '@/lib/drivingRoute'
 import { endRide, formatFare, useActiveRide, useRideProgress } from '@/lib/ride'
+import { useRideMapRoute } from '@/lib/rideMap'
 
 /*
  * 對應設計稿 frame：yoxi-trip-in-progress（叫車 ④／行程進行中）
@@ -20,6 +23,54 @@ export function TripInProgressScreen() {
   const navigate = useNavigate()
   const ride = useActiveRide()
   const progress = useRideProgress(ride)
+
+  /*
+   * 地圖：上車點 → 目的地的路線，加上「目前位置」（設計稿 yoxi-trip-in-progress）。
+   *
+   * 目前位置是**模擬**的：照倒數的進度沿著路線往前推（lib/ride 的 DEMO_SPEEDUP），
+   * 跟下方「剩餘時間為示範速度」是同一件事。點落在路線上而不是兩點連線上，
+   * 才不會在 demo 時看到一台車在河上飄。
+   *
+   * hooks 要放在下面的 early return 之前，所以沒有行程時兩端給 null。
+   */
+  const pickupLat = ride?.pickup.lat
+  const pickupLon = ride?.pickup.lon
+  const dropLat = ride?.dropoff.lat
+  const dropLon = ride?.dropoff.lon
+  const dropLabel = ride?.dropoff.label
+  const from = useMemo(
+    () =>
+      pickupLat !== undefined && pickupLon !== undefined ? { lng: pickupLon, lat: pickupLat } : null,
+    [pickupLat, pickupLon],
+  )
+  const to = useMemo(
+    () => (dropLat !== undefined && dropLon !== undefined ? { lng: dropLon, lat: dropLat } : null),
+    [dropLat, dropLon],
+  )
+  const map = useRideMapRoute(from, to)
+
+  const duration = ride?.estimate.durationMinutes ?? 0
+  const traveled =
+    !progress || progress.phase === 'arriving'
+      ? 0
+      : progress.phase === 'finished' || duration <= 0
+        ? 1
+        : 1 - progress.tripMinutes / duration
+  const line = map.route?.coordinates ?? (from && to ? [from, to] : [])
+  const here = pointAlong(line, traveled)
+  const hereLng = here?.lng
+  const hereLat = here?.lat
+
+  const markers = useMemo<MapMarker[]>(
+    () => [
+      ...(to ? [{ id: 'dropoff', position: to, label: dropLabel, variant: 'goal' as const }] : []),
+      /* 目前位置最後加，疊在路線與目的地上面 */
+      ...(hereLng !== undefined && hereLat !== undefined
+        ? [{ id: 'here', position: { lng: hereLng, lat: hereLat }, variant: 'dot' as const }]
+        : []),
+    ],
+    [to, dropLabel, hereLng, hereLat],
+  )
 
   useEffect(() => {
     if (!ride) navigate('/ride/booking', { replace: true })
@@ -38,13 +89,11 @@ export function TripInProgressScreen() {
     <div className="flex h-full flex-col">
       <MapBackdrop
         center={ride.dropoff}
-        markers={[
-          {
-            id: 'dropoff',
-            position: { lng: ride.dropoff.lon, lat: ride.dropoff.lat },
-            label: ride.dropoff.label,
-          },
-        ]}
+        markers={markers}
+        route={map.route}
+        fitBounds={map.fitBounds}
+        /* 人在車上，位置以路線上的模擬點為準；真實定位的藍點會跟它打架 */
+        showUserLocation={false}
       >
         <div className="absolute inset-x-4 top-3 flex items-center justify-between rounded-full bg-surface px-4 py-3 shadow-[0_3px_14px_rgba(22,32,55,.14)]">
           <span className="flex items-center gap-2 text-[15px] font-semibold">

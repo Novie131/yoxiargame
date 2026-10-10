@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
+import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { CarIcon, ChevronLeftIcon, CrosshairIcon } from '@/components/icons'
 import { FALLBACK_LABEL, requestLocation, useUserLocation } from '@/lib/location'
@@ -13,6 +14,7 @@ import {
   useRideEstimate,
   type RidePlace,
 } from '@/lib/ride'
+import { useRideMapRoute } from '@/lib/rideMap'
 import { copyDestination, YOXI_PASSENGER_LINK } from '@/lib/yoxiHandoff'
 
 /*
@@ -75,6 +77,27 @@ export function EstimateScreen() {
   const estimate = useRideEstimate(pickup, dropoff)
 
   /*
+   * 地圖：上車點 → 目的地的路線，兩點都要在畫面裡（設計稿 yoxi-ride-estimate）。
+   * 原本只置中在目的地，上車點常常跑出畫面，看不出這趟是從哪到哪。
+   */
+  const dropLat = dropoff?.lat
+  const dropLon = dropoff?.lon
+  const dropLabel = dropoff?.label
+  const from = useMemo(() => ({ lng: pickup.lon, lat: pickup.lat }), [pickup.lon, pickup.lat])
+  const to = useMemo(
+    () => (dropLat !== undefined && dropLon !== undefined ? { lng: dropLon, lat: dropLat } : null),
+    [dropLat, dropLon],
+  )
+  const map = useRideMapRoute(from, to)
+  const markers = useMemo<MapMarker[]>(
+    () => [
+      { id: 'pickup', position: from, label: pickup.label, variant: 'origin' },
+      ...(to ? [{ id: 'dropoff', position: to, label: dropLabel, variant: 'destination' as const }] : []),
+    ],
+    [from, to, pickup.label, dropLabel],
+  )
+
+  /*
    * 交棒給真的 yoxi App。
    *
    * 這是這條流程的**主要動作** —— 派車是模擬的，讓使用者以為叫到車了
@@ -130,18 +153,11 @@ export function EstimateScreen() {
     <div className="flex h-full flex-col">
       <MapBackdrop
         center={dropoff ?? pickup}
-        markers={[
-          { id: 'pickup', position: { lng: pickup.lon, lat: pickup.lat }, label: pickup.label },
-          ...(dropoff
-            ? [
-                {
-                  id: 'dropoff',
-                  position: { lng: dropoff.lon, lat: dropoff.lat },
-                  label: dropoff.label,
-                },
-              ]
-            : []),
-        ]}
+        markers={markers}
+        route={map.route}
+        fitBounds={map.fitBounds}
+        /* 上車點已經畫成「我的位置」的深色標記，藍點會疊在上面 */
+        showUserLocation={false}
       >
         <button
           type="button"

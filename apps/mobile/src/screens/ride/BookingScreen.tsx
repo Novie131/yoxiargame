@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
+import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import {
   CrosshairIcon,
@@ -19,6 +20,7 @@ import {
   useLocationState,
 } from '@/lib/location'
 import type { RidePlace } from '@/lib/ride'
+import { nearbyCars } from '@/lib/rideMap'
 import { useTrips } from '@/lib/trips'
 
 /*
@@ -79,6 +81,28 @@ export function BookingScreen() {
 
   const pickup: RidePlace = { label: pickupLabel, lat: location.lat, lon: location.lon }
 
+  /*
+   * 地圖上的標記：上車點、周圍的 yoxi 車（示意）、選好的目的地。
+   * 用 useMemo 是因為地圖收到新陣列就會整批重建標記。
+   */
+  const markers = useMemo<MapMarker[]>(() => {
+    const at = { lng: location.lon, lat: location.lat }
+    return [
+      ...nearbyCars(at).map((car) => ({ ...car, variant: 'car' as const, label: 'yoxi' })),
+      { id: 'pickup', position: at, variant: 'dot' as const },
+      ...(dropoff
+        ? [
+            {
+              id: 'dropoff',
+              position: { lng: dropoff.lon, lat: dropoff.lat },
+              label: dropoff.label,
+              variant: 'destination' as const,
+            },
+          ]
+        : []),
+    ]
+  }, [location.lon, location.lat, dropoff])
+
   const search = async (term: string) => {
     const q = term.trim()
     if (!q) return
@@ -135,11 +159,9 @@ export function BookingScreen() {
       <MapBackdrop
         /* 選好目的地就把視野帶過去，讓使用者確認自己查到的是哪裡 */
         center={dropoff ?? { lat: location.lat, lon: location.lon }}
-        markers={
-          dropoff
-            ? [{ id: 'dropoff', position: { lng: dropoff.lon, lat: dropoff.lat }, label: dropoff.label }]
-            : []
-        }
+        markers={markers}
+        /* 上車點自己畫成主色圓點（設計稿），藍點會疊在同一個位置 */
+        showUserLocation={false}
       >
         <div className="absolute inset-x-4 top-3">
           {searching ? (
@@ -196,6 +218,15 @@ export function BookingScreen() {
             </p>
           )}
         </div>
+
+        {/*
+          * 附近車輛是固定偏移的示意位置，沒有接 yoxi 的車輛定位。
+          * 跟估價頁的「示範流程」、司機頁的「模擬派車」同一個原則：
+          * 看起來像真的東西，旁邊就要寫它不是。
+          */}
+        <p className="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-surface/85 px-2.5 py-1 text-[11px] text-subtle">
+          附近車輛為示意・非即時車況
+        </p>
 
         <button
           type="button"

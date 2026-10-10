@@ -16,6 +16,8 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 
 import { STYLE_URL, TAIWAN_BOUNDS, type Coordinate } from '@/lib/map'
 
+import { markerElement, tokenColor, type MarkerVariant } from './mapMarkers'
+
 /*
  * 共用地圖元件。
  *
@@ -38,7 +40,47 @@ export type MapMarker = {
    * 你選的興趣」本身就是有用的資訊。
    */
   dimmed?: boolean
+  /*
+   * 叫車流程用的造型（上車點、終點、車輛…，見 mapMarkers）。
+   * 不給就是原本的圖釘 —— 探索頁維持原樣。有造型的標記直接把 label 印在旁邊，
+   * 不另外掛 popup。
+   */
+  variant?: MarkerVariant
 }
+
+/** 地圖上的一條路線。dashed 用在「拿不到道路、只好畫直線」的時候。 */
+export type MapRoute = {
+  coordinates: Coordinate[]
+  dashed?: boolean
+}
+
+export type FitPadding = { top: number; bottom: number; left: number; right: number }
+
+/*
+ * fit 的預設留白。上方要讓開疊在地圖上的搜尋框／返回鈕／狀態膠囊，
+ * 下方要讓開標記底下的地名。
+ *
+ * 右邊特別寬是為了右下角的定位鈕：路線常常是左上往右下走（臺北車站→101），
+ * 終點就落在右下角，留白不夠時終點的地名會整個被那顆鈕蓋住（估價頁實測過）。
+ */
+const DEFAULT_FIT_PADDING: FitPadding = { top: 76, bottom: 84, left: 52, right: 92 }
+
+/*
+ * 留白太大時等比例縮小。
+ *
+ * MapLibre 的 fitBounds 在留白加起來超過畫面時會直接放棄（只在 console 警告），
+ * 視野就停在原地 —— 橫向手機上地圖只剩 144px 高，預設的上下留白就已經超過了。
+ */
+function clampPadding(p: FitPadding, width: number, height: number): FitPadding {
+  const room = 48
+  const v = Math.min(1, Math.max(0, height - room) / Math.max(1, p.top + p.bottom))
+  const h = Math.min(1, Math.max(0, width - room) / Math.max(1, p.left + p.right))
+  return { top: p.top * v, bottom: p.bottom * v, left: p.left * h, right: p.right * h }
+}
+
+const ROUTE_SOURCE = 'ride-route'
+const ROUTE_CASING = 'ride-route-casing'
+const ROUTE_LINE = 'ride-route-line'
 
 /*
  * 「我在這裡」的藍點。用自訂 DOM 而不是 MapLibre 預設的圖釘 ——
@@ -62,6 +104,9 @@ export function Map({
   onMarkerClick,
   userLocation,
   controls = true,
+  route,
+  fitBounds,
+  fitPadding,
   className,
 }: {
   center: Coordinate
@@ -82,6 +127,17 @@ export function Map({
    * 那幾頁的右上角已經有自己的按鈕，兩套疊在一起會互相蓋住。
    */
   controls?: boolean
+  /** 叫車流程的路線（上車點→目的地、司機→上車點）。 */
+  route?: MapRoute | null
+  /*
+   * 有給就讓這個範圍 [西, 南, 東, 北] 完整落在畫面裡，center 與 zoom 改成只當初始值。
+   * 叫車流程要同時看到上車點與目的地，單靠中心點做不到。
+   *
+   * 只有範圍改變時才重新 fit；使用者自己拖過、縮放過之後，
+   * 地圖尺寸變動（底部面板長高）也不再把視野搶回來。
+   */
+  fitBounds?: [number, number, number, number] | null
+  fitPadding?: FitPadding
   /*
    * 要給明確的尺寸（h-[340px]、h-full…）。
    *
@@ -107,6 +163,42 @@ export function Map({
    * 於是永遠不會補畫，藍點就這樣消失了。
    */
   const [ready, setReady] = useState(false)
+  /*
+   * 樣式載完了沒。路線圖層要等它 —— addSource 在樣式還沒到之前會丟例外。
+   * 不能拿 map.isStyleLoaded() 臨時判斷：圖磚還在下載時它也回 false，
+   * 而 load 事件只發一次，錯過了就永遠畫不上去。
+   */
+  const [styleLoaded, setStyleLoaded] = useState(false)
+
+  /* fit 相關的最新值。地圖的 resize 事件是在建立時掛上的，要讀 ref 才拿得到最新的 */
+  const fitRef = useRef({ bounds: fitBounds ?? null, padding: fitPadding ?? DEFAULT_FIT_PADDING })
+  fitRef.current = { bounds: fitBounds ?? null, padding: fitPadding ?? DEFAULT_FIT_PADDING }
+  /* 使用者動過地圖就不再自動 fit，直到範圍本身改變（換了一段路） */
+  const userMovedRef = useRef(false)
+  const fittedOnceRef = useRef(false)
+
+  const applyFit = (animate: boolean) => {
+    const map = mapRef.current
+    const { bounds, padding } = fitRef.current
+    if (!map || !bounds) return
+    const el = map.getContainer()
+    const width = el.clientWidth
+    const height = el.clientHeight
+    /* 版面還沒排好（高度 0）時 fit 出來的縮放是錯的，等 resize 事件再來 */
+    if (width < 40 || height < 40) return
+    map.fitBounds(
+      [
+        [bounds[0], bounds[1]],
+        [bounds[2], bounds[3]],
+      ],
+      {
+        padding: clampPadding(padding, width, height),
+        /* 兩點很近（或只有一點）時不要放大到看不出街廓 */
+        maxZoom: 16,
+        duration: animate ? 700 : 0,
+      },
+    )
+  }
 
   /*
    * 建立地圖時要用「最新」的視野，不是第一次 render 當下的。
@@ -224,6 +316,36 @@ export function Map({
           console.warn('[map]', e.error?.message ?? e)
         })
 
+        map.on('load', () => {
+          if (!cancelled) setStyleLoaded(true)
+        })
+
+        /* 地圖尺寸變了（底部面板長高、轉向）就重新 fit，除非使用者已經自己動過 */
+        map.on('resize', () => {
+          if (!userMovedRef.current) applyFit(false)
+        })
+        map.on('dragstart', () => {
+          userMovedRef.current = true
+        })
+        map.on('zoomstart', (e) => {
+          /* 只算手勢；fitBounds 自己觸發的 zoomstart 沒有 originalEvent */
+          if (e.originalEvent) userMovedRef.current = true
+        })
+
+        /*
+         * 自己再盯一次容器尺寸，而不是只靠 MapLibre 內建的。
+         *
+         * MapLibre 會丟掉 ResizeObserver 的第一次回呼（當成「初始尺寸」），
+         * 但如果容器在那之前就已經變了 —— 叫車頁的底部面板在估價回來時長高、
+         * 把地圖往上擠 —— 被丟掉的正是那次變動，地圖內部就一直以為自己比較高：
+         * 畫面下緣那一截被面板蓋住，fit 進去的目的地剛好落在看不到的地方（踩過）。
+         */
+        const resizeObserver = new ResizeObserver(() => {
+          if (!cancelled) map.resize()
+        })
+        resizeObserver.observe(container)
+        map.once('remove', () => resizeObserver.disconnect())
+
         mapRef.current = map
         setReady(true)
       } catch (error) {
@@ -235,6 +357,8 @@ export function Map({
     return () => {
       cancelled = true
       setReady(false)
+      setStyleLoaded(false)
+      fittedOnceRef.current = false
       mapRef.current?.remove()
       mapRef.current = null
       /* 地圖沒了，標記的參照也要清掉，否則下次會拿到已銷毀地圖上的 Marker */
@@ -250,9 +374,84 @@ export function Map({
 
   /* 視野變動（切換城市、定位回來）：飛過去，不重建地圖 */
   useEffect(() => {
-    if (!ready) return
+    /* 有 fitBounds 時視野歸它管，不然兩邊會互相搶 */
+    if (!ready || fitRef.current.bounds) return
     mapRef.current?.flyTo({ center: [center.lng, center.lat], zoom, duration: 900 })
   }, [center.lng, center.lat, zoom, ready])
+
+  /* 範圍變了（目的地查到了、道路路線回來了）就重新 fit。第一次不要動畫，直接到位。 */
+  const [fitW, fitS, fitE, fitN] = fitBounds ?? []
+  useEffect(() => {
+    if (!ready || fitW === undefined) return
+    userMovedRef.current = false
+    applyFit(fittedOnceRef.current)
+    fittedOnceRef.current = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, fitW, fitS, fitE, fitN])
+
+  /*
+   * 路線圖層。每次變動就整個拆掉重建 —— 一頁最多一條線，
+   * 比起分別處理「新增／更新資料／切換虛線」三種情況，這樣不會漏狀態。
+   */
+  const routeCoords = route?.coordinates
+  const routeDashed = route?.dashed ?? false
+  useEffect(() => {
+    const map = mapRef.current
+    if (!styleLoaded || !map) return
+
+    try {
+      if (map.getLayer(ROUTE_LINE)) map.removeLayer(ROUTE_LINE)
+      if (map.getLayer(ROUTE_CASING)) map.removeLayer(ROUTE_CASING)
+      if (map.getSource(ROUTE_SOURCE)) map.removeSource(ROUTE_SOURCE)
+      if (!routeCoords || routeCoords.length < 2) return
+
+      map.addSource(ROUTE_SOURCE, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: routeCoords.map((p) => [p.lng, p.lat]) },
+        },
+      })
+
+      /*
+       * 插在第一個文字圖層之前：路名、地名會壓在路線上面，
+       * 跟各家導航 App 一樣，不會被一條粗線整排蓋掉。
+       */
+      const beforeId = map.getStyle().layers.find((l) => l.type === 'symbol')?.id
+      /* 設計稿的路線是品牌色。底下墊一條半透明的寬線，在灰色的道路上才跳得出來 */
+      const color = tokenColor('--color-primary', '#D8654F')
+
+      map.addLayer(
+        {
+          id: ROUTE_CASING,
+          type: 'line',
+          source: ROUTE_SOURCE,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': color, 'line-width': 11, 'line-opacity': 0.22 },
+        },
+        beforeId,
+      )
+      map.addLayer(
+        {
+          id: ROUTE_LINE,
+          type: 'line',
+          source: ROUTE_SOURCE,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': color,
+            'line-width': 5,
+            /* 直線退路畫成虛線，一眼看得出那不是實際道路 */
+            ...(routeDashed ? { 'line-dasharray': [1, 1.6] } : {}),
+          },
+        },
+        beforeId,
+      )
+    } catch (error) {
+      /* 畫不上去就少一條線，地圖本身與標記照常 —— 不值得讓整頁壞掉 */
+      console.warn('[map] 路線圖層失敗：', error)
+    }
+  }, [styleLoaded, routeCoords, routeDashed])
 
   /* 標記。每次變動就整批換掉 —— 目前的數量很小，做增量比對不划算。 */
   useEffect(() => {
@@ -272,10 +471,13 @@ export function Map({
          * 它有內建的遮蔽淡化機制，每次更新都會把元素的 opacity 寫成自己的值，
          * 直接改 style.opacity 會被無聲蓋掉（踩過）。
          */
-        const marker = new Marker({
-          color: m.dimmed ? '#C9CBD1' : '#D8654F',
-          opacity: m.dimmed ? '0.5' : '1',
-        }).setLngLat([m.position.lng, m.position.lat])
+        const marker = m.variant
+          ? new Marker({ element: markerElement(m.variant, m.label), anchor: 'center' })
+          : new Marker({
+              color: m.dimmed ? '#C9CBD1' : '#D8654F',
+              opacity: m.dimmed ? '0.5' : '1',
+            })
+        marker.setLngLat([m.position.lng, m.position.lat])
 
         if (onMarkerClickRef.current) {
           marker.getElement().style.cursor = 'pointer'
@@ -284,7 +486,7 @@ export function Map({
             e.stopPropagation()
             onMarkerClickRef.current?.(m.id)
           })
-        } else if (m.label) {
+        } else if (m.label && !m.variant) {
           marker.setPopup(new Popup({ offset: 24 }).setText(m.label))
         }
 
