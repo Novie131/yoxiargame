@@ -9,15 +9,31 @@ import { ExploreScreen } from '@/screens/ExploreScreen'
 import { MemberScreen } from '@/screens/MemberScreen'
 import { NotificationsScreen } from '@/screens/NotificationsScreen'
 import { SettingsScreen } from '@/screens/SettingsScreen'
+import { DelayRescueScreen } from '@/screens/DelayRescueScreen'
+import { LockScreenScreen } from '@/screens/LockScreenScreen'
 import { BookingScreen } from '@/screens/ride/BookingScreen'
 import { DriverArrivingScreen } from '@/screens/ride/DriverArrivingScreen'
 import { EstimateScreen } from '@/screens/ride/EstimateScreen'
+import { SettlementScreen } from '@/screens/ride/SettlementScreen'
 import { TripInProgressScreen } from '@/screens/ride/TripInProgressScreen'
 import { RainyCommuteScreen } from '@/screens/RainyCommuteScreen'
 import { UvAlertScreen } from '@/screens/UvAlertScreen'
 import { TripsScreen } from '@/screens/TripsScreen'
 
 export default function App() {
+  return (
+    <Routes>
+      {/*
+        * 鎖定畫面推播的示範頁掛在手機殼外面：鎖定畫面不該有 App 的狀態列與 tab bar。
+        * 用 lib/layout 的「沒有 tab bar 的路徑」也只能拿掉 tab bar，假狀態列仍在。
+        */}
+      <Route path="/lockscreen" element={<LockScreenScreen />} />
+      <Route path="*" element={<ShellRoutes />} />
+    </Routes>
+  )
+}
+
+function ShellRoutes() {
   return (
     <AppShell>
       <Routes>
@@ -26,6 +42,7 @@ export default function App() {
         <Route path="/commute-setup" element={<CommuteSetupScreen />} />
         <Route path="/rainy" element={<RainyCommuteScreen />} />
         <Route path="/uv" element={<UvAlertScreen />} />
+        <Route path="/rescue" element={<DelayRescueScreen />} />
         <Route path="/trips" element={<TripsScreen />} />
         <Route path="/notifications" element={<NotificationsScreen />} />
         <Route path="/explore" element={<ExploreScreen />} />
@@ -35,6 +52,7 @@ export default function App() {
         <Route path="/ride/estimate" element={<EstimateScreen />} />
         <Route path="/ride/driver" element={<DriverArrivingScreen />} />
         <Route path="/ride/trip" element={<TripInProgressScreen />} />
+        <Route path="/ride/settlement" element={<SettlementScreen />} />
         <Route path="/dev" element={<DevIndexScreen />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

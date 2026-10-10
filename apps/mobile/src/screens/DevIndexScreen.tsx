@@ -55,6 +55,35 @@ const groups: Array<{ title: string; items: Item[] }> = [
     ],
   },
   {
+    /*
+     * 這四張稿這個月從 Figma 抓不到圖，Document/ 底下沒有截圖，
+     * 是照圖層文字實作的 —— 所以標 Figma 節點而不是 png 檔名，日後才找得回原稿。
+     */
+    title: '通勤延誤救援',
+    items: [
+      {
+        to: '/lockscreen',
+        label: '① 鎖定畫面推播（示範畫面）',
+        file: 'Figma 472:88 iphone-lockscreen-notification（無截圖，依圖層文字）',
+      },
+      {
+        to: '/rescue',
+        label: '② 延誤救援彈窗',
+        file: 'Figma 470:88 delay-rescue-modal（無截圖，依圖層文字）',
+      },
+      {
+        to: '/ride/settlement',
+        label: '③ 車資結算',
+        file: 'Figma 454:88 yoxi-fare-settlement（無截圖，依圖層文字）',
+      },
+      {
+        to: '/ride/settlement?rescue=1',
+        label: '④ 車資結算（延誤救援版）',
+        file: 'Figma 481:89 fare-settlement-delay-rescue（無截圖，依圖層文字）',
+      },
+    ],
+  },
+  {
     title: '探索',
     items: [
       { to: '/explore', label: '探索首頁', file: '工作區/exploration-home-5.png（未拍板）' },
@@ -126,6 +155,10 @@ export function DevIndexScreen() {
         <p>
           下雨情境 →「立即叫車」→ 預估車資（依公告費率即時估算）→ 確認叫車 →
           司機前往中（倒數自動進入）→ 行程進行中 → 完成
+        </p>
+        <p className="mt-1.5">
+          鎖定畫面推播 → 延誤救援彈窗 →「立即叫車救援」→ 同一條叫車流程（這趟標記為救援）→
+          車資結算（救援版）
         </p>
         <p className="mt-1.5">
           探索頁任務 →「叫車前往」、對話問車資 → 估價卡 →「叫車前往」、

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
@@ -6,7 +6,7 @@ import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { AlertIcon, ShieldIcon } from '@/components/icons'
 import { pointAlong } from '@/lib/drivingRoute'
-import { endRide, formatFare, useActiveRide, useRideProgress } from '@/lib/ride'
+import { completeRide, formatFare, useActiveRide, useRideProgress } from '@/lib/ride'
 import { useRideMapRoute } from '@/lib/rideMap'
 
 /*
@@ -72,8 +72,14 @@ export function TripInProgressScreen() {
     [to, dropLabel, hereLng, hereLat],
   )
 
+  /*
+   * 按「完成行程」時 completeRide 會同步清掉行程，但換頁是包在 transition 裡的、比較晚。
+   * 沒有這個旗標，下面的保護會先看到「沒有行程」把人導回叫車首頁，結算頁就被蓋掉了。
+   */
+  const leaving = useRef(false)
+
   useEffect(() => {
-    if (!ride) navigate('/ride/booking', { replace: true })
+    if (!ride && !leaving.current) navigate('/ride/booking', { replace: true })
   }, [ride, navigate])
 
   if (!ride || !progress) return null
@@ -81,8 +87,9 @@ export function TripInProgressScreen() {
   const arrived = progress.phase === 'finished'
 
   const finish = () => {
-    endRide()
-    navigate('/')
+    leaving.current = true
+    completeRide()
+    navigate('/ride/settlement')
   }
 
   return (

@@ -50,6 +50,11 @@ export type ActiveRide = {
   driver: Driver
   /** 按下「確認叫車」的時間，用來推算模擬進度 */
   bookedAt: number
+  /**
+   * 這趟是從「通勤延誤救援」叫的。結算頁靠它顯示救援版（多一條「比台鐵提早抵達」）。
+   * 選填：存在 sessionStorage 裡的舊資料沒有這個欄位，讀到 undefined 就是一般行程。
+   */
+  rescue?: boolean
 }
 
 /*
@@ -107,9 +112,50 @@ function subscribe(listener: () => void) {
   }
 }
 
+/*
+ * ── 延誤救援標記 ──
+ *
+ * 救援彈窗按「立即叫車救援」之後，要經過估價頁、司機頁、行程頁才會到結算頁，
+ * 而那幾頁都不知道（也不該知道）這趟是不是救援。
+ *
+ * 所以標記不走網址參數一路傳下去，而是先記一筆「下一趟是救援」，
+ * 由 startRide 在建立行程時收下並寫進那一趟 —— 從此跟著行程走，
+ * 中間任何一頁都不用改。
+ *
+ * 給它一個有效期限：按了救援、中途放棄、半小時後再正常叫一趟車，
+ * 那一趟不該被當成救援。
+ */
+const RESCUE_KEY = 'yoxi.ride.rescuePending'
+const RESCUE_TTL_MS = 30 * 60 * 1000
+
+/** 標記「接下來叫的這一趟是延誤救援」。救援彈窗的主按鈕呼叫。 */
+export function markNextRideAsRescue() {
+  try {
+    sessionStorage.setItem(RESCUE_KEY, String(Date.now()))
+  } catch {
+    /* 存不進去頂多結算頁顯示一般版，不值得擋住叫車 */
+  }
+}
+
+/** 收下救援標記（只能收一次），回傳這一趟是不是救援 */
+function takeRescueMark(): boolean {
+  try {
+    const at = Number(sessionStorage.getItem(RESCUE_KEY))
+    sessionStorage.removeItem(RESCUE_KEY)
+    return Number.isFinite(at) && at > 0 && Date.now() - at < RESCUE_TTL_MS
+  } catch {
+    return false
+  }
+}
+
 /** 確認叫車。回傳建立好的那一趟。 */
-export function startRide(input: Omit<ActiveRide, 'driver' | 'bookedAt'>): ActiveRide {
-  const ride: ActiveRide = { ...input, driver: DEMO_DRIVER, bookedAt: Date.now() }
+export function startRide(input: Omit<ActiveRide, 'driver' | 'bookedAt' | 'rescue'>): ActiveRide {
+  const ride: ActiveRide = {
+    ...input,
+    driver: DEMO_DRIVER,
+    bookedAt: Date.now(),
+    rescue: takeRescueMark(),
+  }
   patch(ride)
   return ride
 }
@@ -117,6 +163,63 @@ export function startRide(input: Omit<ActiveRide, 'driver' | 'bookedAt'>): Activ
 /** 行程結束或取消。 */
 export function endRide() {
   patch(null)
+}
+
+/*
+ * ── 已完成的那一趟 ──
+ *
+ * 結算頁要顯示剛結束那趟的里程與車資，但 endRide 會把行程清掉 ——
+ * 行程頁按「完成行程」之後，結算頁就讀不到了。
+ *
+ * 所以「完成」跟「取消」分開：completeRide 先把這趟留一份快照再結束，
+ * 取消（司機頁的 endRide）不留，才不會把取消掉的那趟拿去結算。
+ * 一樣放 sessionStorage，理由同上：結算是「這次」的事。
+ */
+export type CompletedRide = ActiveRide & {
+  /** 按下「完成行程」的時間，結算頁的抵達時間從這裡來 */
+  completedAt: number
+}
+
+const COMPLETED_KEY = 'yoxi.ride.completed'
+
+function readCompleted(): CompletedRide | null {
+  try {
+    const raw = sessionStorage.getItem(COMPLETED_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as CompletedRide
+    if (!parsed?.pickup?.label || !parsed?.dropoff?.label || !parsed?.estimate) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+let completed: CompletedRide | null = readCompleted()
+
+function patchCompleted(next: CompletedRide | null) {
+  completed = next
+  try {
+    if (next) sessionStorage.setItem(COMPLETED_KEY, JSON.stringify(next))
+    else sessionStorage.removeItem(COMPLETED_KEY)
+  } catch {
+    /* 存不進去就只有這次有效 */
+  }
+  for (const listener of listeners) listener()
+}
+
+/** 行程完成：留下結算用的快照，再結束行程。沒有進行中的行程時什麼都不做。 */
+export function completeRide() {
+  if (active) patchCompleted({ ...active, completedAt: Date.now() })
+  patch(null)
+}
+
+/** 結算頁按「確認並完成行程」之後清掉，下一趟不會看到上一趟的帳 */
+export function clearCompletedRide() {
+  patchCompleted(null)
+}
+
+export function useCompletedRide(): CompletedRide | null {
+  return useSyncExternalStore(subscribe, () => completed)
 }
 
 export function useActiveRide(): ActiveRide | null {
