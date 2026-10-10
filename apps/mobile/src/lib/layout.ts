@@ -11,7 +11,7 @@
  */
 
 /* 這些設計稿是全螢幕流程，沒有 tab bar */
-const routesWithoutTabBar = new Set(['/ride/estimate', '/ride/settlement'])
+const routesWithoutTabBar = new Set(['/ride/estimate'])
 
 /** 這個路徑底下有沒有 tab bar */
 export function hasTabBar(pathname: string): boolean {
