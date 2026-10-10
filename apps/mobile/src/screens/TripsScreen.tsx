@@ -1,4 +1,5 @@
-import { useNavigate } from 'react-router'
+import { useId, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useNavigate, useSearchParams } from 'react-router'
 
 import { TransitStatusBadge } from '@/components/TransitStatus'
 import { BellIcon } from '@/components/icons'
@@ -14,9 +15,26 @@ import { useDeparture } from '@/lib/departure'
 import { useMember } from '@/lib/member'
 import { useNotifications } from '@/lib/notifications'
 import { formatFare } from '@/lib/ride'
-import { useRoutePlan, type AccessibilityPoint, type RoutePlan } from '@/lib/routePlan'
-import { removeTrip, useTrips, type PlannedTrip } from '@/lib/trips'
+import {
+  useRoutePlan,
+  type AccessibilityPoint,
+  type PlanState,
+  type RoutePlan,
+} from '@/lib/routePlan'
+import {
+  completeTrip,
+  moveTrip,
+  removeTrip,
+  usePastTrips,
+  useTomorrowTrips,
+  useTripDay,
+  useTrips,
+  type PastTrip,
+  type PlannedTrip,
+} from '@/lib/trips'
 import { useMetroStatus } from '@/lib/transit'
+
+import { MoreMenu, type MenuItem } from './trips/MoreMenu'
 
 /*
  * 對應設計稿 frame：行程 – 常用路線
@@ -34,11 +52,12 @@ import { useMetroStatus } from '@/lib/transit'
  * 「約 N 分鐘」曾經是寫死的 25 分。現在它有真實來源了，但仍然是估計值 ——
  * 一律寫「約」。
  *
- * 這一頁有**兩種**東西，刻意分成兩區，不要混在一起：
+ * 這一頁有**兩種**東西，刻意分成兩個分頁，不要混在一起：
  *
- *   今天的行程  一次性。使用者在對話裡規劃完、自己按了「加入今天行程」才會有。
- *               跨日就消失（lib/trips.ts）。
- *   常用路線    重複發生的通勤，最多兩條（上班／回家），驅動異常通知。
+ *   即將到來        一次性的行程。使用者在對話裡規劃完、自己按了「加入今天行程」才會有；
+ *                   可以改到明天。跨日後今天的變過往、明天的變今天（lib/trips.ts）。
+ *   常用路線＆過往  重複發生的通勤，最多兩條（上班／回家），驅動異常通知；
+ *                   以及已經過去的行程。
  *
  * 分開的理由是：一次性的規劃不該覆蓋掉他每天上班的那條路線 ——
  * 那是他早上唯一會看的東西。
@@ -231,17 +250,32 @@ function NextLegCard({ route }: { route: CommuteRoute }) {
   )
 }
 
-/* 還沒設定路線時的招呼卡。不講任何行程，因為根本還沒有。 */
-function WelcomeCard() {
+/*
+ * 還沒設定路線時的招呼卡。
+ *
+ * 下面已經列著今天的行程時，不能再寫「還沒有安排行程」—— 同一頁自相矛盾。
+ * 那時候缺的只是常用路線，就照實講缺什麼。
+ */
+function WelcomeCard({ hasTrips, onSetup }: { hasTrips: boolean; onSetup: () => void }) {
   const { displayName } = useMember()
 
   return (
     <div className="rounded-2xl bg-ink px-5 py-4 text-white">
       <p className="text-[13px] text-white/70">{greeting()}，{displayName}</p>
-      <h2 className="mt-1 text-[20px] font-bold">還沒有安排行程</h2>
+      <h2 className="mt-1 text-[20px] font-bold">
+        {hasTrips ? '還沒有設定常用路線' : '還沒有安排行程'}
+      </h2>
       <p className="mt-3 text-[13px] text-white/85">
         設定一條常用路線，之後這裡會顯示路況提醒。
       </p>
+      {/* 設定入口在另一個分頁，新使用者不會想到要切過去找，這裡直接給 */}
+      <button
+        type="button"
+        onClick={onSetup}
+        className="mt-3 min-h-11 rounded-xl bg-white/10 px-4 text-[14px] font-semibold text-white"
+      >
+        設定通勤路線
+      </button>
     </div>
   )
 }
@@ -335,9 +369,63 @@ function AccessibilityLine({ points }: { points: AccessibilityPoint[] }) {
   )
 }
 
-function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () => void }) {
+/*
+ * 「查看路線」展開的分段。
+ *
+ * 資料就是卡片上那個「約 N 分鐘」的同一份規劃（TDX 站間行駛時間），
+ * 不另外查、也不帶去對話 —— 看一下怎麼走不值得叫一次模型，而且 demo 時不會因為網路慢就卡住。
+ */
+function RouteLegs({ plan, mode }: { plan: PlanState; mode: CommuteRoute['mode'] }) {
+  if (plan.status === 'loading') {
+    return <p className="text-[13px] text-muted">計算路線中…</p>
+  }
+  if (plan.status !== 'ready') {
+    return (
+      <p className="text-[13px] text-muted">
+        {mode === 'bus'
+          ? '公車路線目前沒有分段資訊，路況異常時仍會通知你。'
+          : '目前查不到這條路線的分段資訊，請稍後再試。'}
+      </p>
+    )
+  }
+
+  const { legs } = plan.plan
+  return (
+    <>
+      <ol className="relative space-y-2.5">
+        {/* 段落之間的連接線，跟對話裡的路線卡同一個語彙 */}
+        {legs.length > 1 && <span className="absolute bottom-3 left-[4.5px] top-3 w-px bg-line" />}
+        {legs.map((leg, i) => (
+          <li key={`${leg.lineId}-${i}`} className="flex gap-3">
+            <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-primary" />
+            <div className="-mt-0.5 min-w-0">
+              <p className="text-[14px] font-semibold">{leg.line}</p>
+              <p className="text-[12px] text-muted">
+                {leg.from} → {leg.to}・{leg.stops} 站・{leg.minutes} 分
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      {/* 時間的組成要講清楚，不要讓使用者以為是保證值 */}
+      <p className="mt-2.5 text-[11px] text-subtle">時間為估計值，等車依班距估算。</p>
+    </>
+  )
+}
+
+function FrequentRouteCard({
+  route,
+  onEdit,
+  onSettings,
+}: {
+  route: CommuteRoute
+  onEdit: () => void
+  onSettings: () => void
+}) {
   const line = metroLineOf(route)
   const accessibility = useAccessibilityPriority()
+  const [expanded, setExpanded] = useState(false)
+  const legsId = useId()
   /* 公車路線查不到捷運路網，會回 unavailable，那就只顯示運具不顯示時間 */
   const plan = useRoutePlan(
     route.mode === 'bus' ? null : route.origin,
@@ -363,22 +451,19 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
           <p className="text-[12px] font-semibold text-success">{labelText.title}</p>
         </div>
         {/*
-          * 設計稿的「⋯」。唯一有意義的去處是通勤設定，所以就直接接過去 ——
-          * 為了一個選項開一張選單，多一次點擊而已。
+          * 設計稿的「•••」。CTA 改成「查看路線」之後，「修改路線」就收進這裡 ——
+          * 修改是偶爾才做的事，不該佔掉每天都會看的那顆大按鈕。
           */}
-        <button
-          type="button"
-          aria-label="編輯通勤路線"
-          onClick={onEdit}
-          className="flex gap-1 pt-2"
-        >
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="h-1.5 w-1.5 rounded-full bg-line" />
-          ))}
-        </button>
+        <MoreMenu
+          label={`${labelText.title}路線選項`}
+          items={[
+            { label: '修改路線', onSelect: onEdit },
+            { label: '通勤提醒設定', onSelect: onSettings },
+          ]}
+        />
       </div>
 
-      <div className="relative mt-4 space-y-4">
+      <div className="relative mt-3 space-y-4">
         {/* 兩站之間的連接線 */}
         <span className="absolute left-[4.5px] top-4 h-8 w-px bg-line" />
         {/* 回家那條的起訖標籤是反過來的 —— 寫死「住家 → 公司」會讓它整張卡都在說謊 */}
@@ -390,7 +475,7 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
         />
       </div>
 
-      <div className="mt-4 flex items-end justify-between border-t border-black/[.07] pt-3.5">
+      <div className="mt-4 flex items-end justify-between gap-2 border-t border-black/[.07] pt-3.5">
         <p className="text-[13px] text-muted">
           <span className="mr-1.5">🚇</span>
           {route.line ?? MODE_LABEL[route.mode]}
@@ -412,26 +497,35 @@ function FrequentRouteCard({ route, onEdit }: { route: CommuteRoute; onEdit: () 
         <AccessibilityLine points={plan.plan.accessibility} />
       )}
 
+      {expanded && (
+        <div id={legsId} className="mt-3 rounded-xl bg-surface-2 px-3 py-3">
+          <RouteLegs plan={plan} mode={route.mode} />
+        </div>
+      )}
+
       <button
         type="button"
-        onClick={onEdit}
+        aria-expanded={expanded}
+        aria-controls={legsId}
+        onClick={() => setExpanded((v) => !v)}
         className="mt-4 w-full rounded-xl bg-primary py-3.5 text-[16px] font-semibold text-white transition-transform active:scale-[.98]"
       >
-        修改路線
+        {expanded ? '收合路線' : '查看路線'}
       </button>
     </div>
   )
 }
 
 /*
- * 一筆今天的行程。
+ * 一筆規劃好的行程（今天或明天）。
  *
- * 刻意做得比常用路線卡輕 —— 它是使用者今天臨時決定的一趟，
- * 不是需要長期追蹤的東西。所以不查即時狀態、也沒有大顆的 CTA。
+ * 刻意做得比常用路線卡輕 —— 它是使用者臨時決定的一趟，
+ * 不是需要長期追蹤的東西。所以不查即時狀態、也沒有大顆的 CTA；
+ * 改日期、標記完成、移除都收在「•••」裡。
  */
-function TodayTripCard({ trip, onRemove }: { trip: PlannedTrip; onRemove: () => void }) {
+function TripCard({ trip, actions }: { trip: PlannedTrip; actions: MenuItem[] }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-[0_2px_12px_rgba(22,32,55,.06)]">
+    <div className="flex items-center gap-3 rounded-2xl bg-surface py-3 pl-4 pr-3 shadow-[0_2px_12px_rgba(22,32,55,.06)]">
       <div className="min-w-0 flex-1">
         <p className="truncate text-[15px] font-semibold">
           {trip.from} → {trip.to}
@@ -443,148 +537,420 @@ function TodayTripCard({ trip, onRemove }: { trip: PlannedTrip; onRemove: () => 
           {`・約 ${trip.totalMinutes} 分`}
         </p>
       </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`移除 ${trip.from} 到 ${trip.to} 的行程`}
-        className="shrink-0 rounded-lg px-2.5 py-1.5 text-[13px] text-subtle"
-      >
-        移除
-      </button>
+      <MoreMenu label={`${trip.from} 到 ${trip.to} 的行程選項`} items={actions} />
     </div>
   )
 }
 
-export function TripsScreen() {
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
+
+/* YYYY-MM-DD 的前一天。跟 lib/trips 的 nextDay 一樣用 UTC 做純日期運算。 */
+function prevDay(date: string): string {
+  const [y, m, d] = date.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10)
+}
+
+/* 過往行程的日期欄：近的寫「今天／昨天」，其餘寫月/日，下面一律附星期 */
+function pastDateLabel(date: string, today: string): { main: string; weekday: string } {
+  const [y, m, d] = date.split('-').map(Number)
+  const weekday = `週${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}`
+  if (date === today) return { main: '今天', weekday }
+  if (date === prevDay(today)) return { main: '昨天', weekday }
+  return { main: `${m}/${d}`, weekday }
+}
+
+function PastTripRow({ trip, today }: { trip: PastTrip; today: string }) {
+  const { main, weekday } = pastDateLabel(trip.date, today)
+  return (
+    <li className="flex items-center gap-3 py-3">
+      <div className="w-11 shrink-0 text-center">
+        <p className="text-[14px] font-semibold">{main}</p>
+        <p className="text-[11px] text-subtle">{weekday}</p>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[15px] font-semibold">
+          {trip.from} → {trip.to}
+        </p>
+        <p className="mt-0.5 truncate text-[12px] text-muted">
+          <span className="mr-1.5">🚇</span>
+          捷運・{trip.lines.join(' → ')}
+          {`・約 ${trip.totalMinutes} 分`}
+        </p>
+      </div>
+      {/*
+        * 只有他自己按了「標記完成」的才寫已完成。
+        * 日期過了自動歸檔的那筆，我們不知道他到底有沒有去。
+        */}
+      {trip.endedBy === 'done' && (
+        <span className="shrink-0 rounded-full bg-success-tint px-2 py-0.5 text-[11px] font-semibold text-success">
+          已完成
+        </span>
+      )}
+    </li>
+  )
+}
+
+/* 過往行程先列幾筆就好，其餘收在「查看全部」 */
+const PAST_PREVIEW = 3
+
+function PastTripsSection() {
+  const history = usePastTrips()
+  const today = useTripDay()
+  const [showAll, setShowAll] = useState(false)
+  const listId = useId()
+
+  const shown = showAll ? history : history.slice(0, PAST_PREVIEW)
+  const hasMore = history.length > PAST_PREVIEW
+
+  return (
+    <section aria-labelledby={`${listId}-title`} className="space-y-3">
+      <SectionHeader
+        id={`${listId}-title`}
+        title="過往行程"
+        aside={
+          hasMore ? (
+            <button
+              type="button"
+              aria-expanded={showAll}
+              aria-controls={listId}
+              onClick={() => setShowAll((v) => !v)}
+              className="hit-area text-[13px] font-medium text-primary"
+            >
+              {showAll ? '收合' : `查看全部（${history.length}）`}
+            </button>
+          ) : history.length > 0 ? (
+            <span className="text-[13px] text-subtle">{history.length} 筆</span>
+          ) : null
+        }
+      />
+      {history.length > 0 ? (
+        <ul
+          id={listId}
+          className="divide-y divide-black/[.07] rounded-2xl bg-surface px-4 shadow-[0_2px_12px_rgba(22,32,55,.06)]"
+        >
+          {shown.map((trip) => (
+            <PastTripRow key={trip.id} trip={trip} today={today} />
+          ))}
+        </ul>
+      ) : (
+        <EmptyNote>還沒有過往行程。行程標記完成、或過了當天，就會留在這裡。</EmptyNote>
+      )}
+    </section>
+  )
+}
+
+function SectionHeader({
+  id,
+  title,
+  aside,
+}: {
+  id?: string
+  title: string
+  aside?: ReactNode
+}) {
+  return (
+    <div className="flex items-baseline justify-between px-1">
+      <h2 id={id} className="text-[18px] font-bold">
+        {title}
+      </h2>
+      {aside}
+    </div>
+  )
+}
+
+/* 區塊沒有資料時的一句話。刻意比 EmptyRouteCard 輕，一頁上不要疊好幾張大空卡。 */
+function EmptyNote({ children }: { children: ReactNode }) {
+  return (
+    <p className="rounded-2xl bg-surface px-4 py-3.5 text-[13px] text-muted">{children}</p>
+  )
+}
+
+function UpcomingPanel() {
+  const navigate = useNavigate()
+  const { route } = useCommuteRoutes()
+  const today = useTrips()
+  const tomorrow = useTomorrowTrips()
+
+  return (
+    <div className="space-y-4">
+      {route ? (
+        <NextLegCard route={route} />
+      ) : (
+        <WelcomeCard
+          hasTrips={today.length > 0 || tomorrow.length > 0}
+          onSetup={() => navigate('/commute-setup')}
+        />
+      )}
+
+      <section className="space-y-3">
+        <SectionHeader
+          title="稍後行程"
+          aside={
+            today.length > 0 ? (
+              <span className="text-[13px] text-subtle">{today.length} 筆</span>
+            ) : null
+          }
+        />
+        {today.length > 0 ? (
+          <div className="space-y-3">
+            {today.map((trip) => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                actions={[
+                  { label: '改到明天', onSelect: () => moveTrip(trip.id, 'tomorrow') },
+                  { label: '標記完成', onSelect: () => completeTrip(trip.id) },
+                  { label: '移除', onSelect: () => removeTrip(trip.id), danger: true },
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-surface py-2 pl-4 pr-2">
+            <p className="text-[13px] text-muted">今天沒有其他行程。在對話裡規劃路線後可以加進來。</p>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="min-h-11 shrink-0 rounded-xl px-3 text-[13px] font-medium text-primary"
+            >
+              去規劃
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeader
+          title="明日行程"
+          aside={
+            tomorrow.length > 0 ? (
+              <span className="text-[13px] text-subtle">{tomorrow.length} 筆</span>
+            ) : null
+          }
+        />
+        {tomorrow.length > 0 ? (
+          <div className="space-y-3">
+            {tomorrow.map((trip) => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                actions={[
+                  { label: '改回今天', onSelect: () => moveTrip(trip.id, 'today') },
+                  { label: '移除', onSelect: () => removeTrip(trip.id), danger: true },
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyNote>明天還沒有行程。稍後行程可以從「•••」改到明天。</EmptyNote>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function RoutesPanel() {
   const navigate = useNavigate()
   /* list 已經是「上班那條在前」的順序，畫面不要自己再排一次 */
   const { route, list, configured } = useCommuteRoutes()
-  const { unreadCount } = useNotifications()
-  const trips = useTrips()
   const setup = () => navigate('/commute-setup')
+  const settings = () => navigate('/settings')
 
   return (
-    <div className="min-h-full bg-surface-2">
-      <header className="flex items-start justify-between bg-surface px-5 pb-5 pt-2">
-        <div>
-          <h1 className="text-[26px] font-bold tracking-tight">我的行程</h1>
-          {/* 設計稿寫的是 8 月 26 日・星期三（2026 年該日確實是星期三），
-              但日期應該跟著今天走，不能寫死 */}
-          <p className="mt-1 text-[13px] text-muted">{formatDateWithWeekday()}</p>
-        </div>
-        <button
-          type="button"
-          aria-label={unreadCount > 0 ? `通知，${unreadCount} 則未讀` : '通知'}
-          onClick={() => navigate('/notifications')}
-          className="hit-area pt-1.5"
-        >
-          <BellIcon />
-          {/* 這個數字現在是真的：後端監看到的、與這個人路線相關的未讀事件 */}
-          {unreadCount > 0 && (
-            <span className="absolute -right-1.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
-          )}
-        </button>
-      </header>
-
-      <div className="space-y-4 px-4 py-4">
-        {route ? <NextLegCard route={route} /> : <WelcomeCard />}
-
-        {/*
-          * 只有真的有行程才顯示這一區。空狀態留給常用路線那邊就好 ——
-          * 兩個空卡片疊在一起，使用者會以為這頁壞了。
-          */}
-        {trips.length > 0 && (
-          <>
-            <div className="flex items-baseline justify-between px-1">
-              <h2 className="text-[18px] font-bold">今天的行程</h2>
-              <span className="text-[13px] text-subtle">{trips.length} 筆</span>
-            </div>
-            <div className="space-y-3">
-              {trips.map((trip) => (
-                <TodayTripCard key={trip.id} trip={trip} onRemove={() => removeTrip(trip.id)} />
-              ))}
-            </div>
-          </>
-        )}
-
-        <div className="flex items-baseline justify-between px-1">
-          <h2 className="text-[18px] font-bold">常用路線</h2>
-          {configured && (
+    <div className="space-y-4">
+      <SectionHeader
+        title="常用路線"
+        aside={
+          configured ? (
             <button
               type="button"
               onClick={setup}
-              className="text-[13px] font-medium text-primary"
+              className="hit-area text-[13px] font-medium text-primary"
             >
               管理
             </button>
+          ) : null
+        }
+      />
+
+      {list.length > 0 ? (
+        <div className="space-y-3">
+          {list.map((r) => (
+            <FrequentRouteCard key={r.label} route={r} onEdit={setup} onSettings={settings} />
+          ))}
+
+          {/*
+            * 只設了上班那條時，提示還可以設回家那條。
+            *
+            * 放在這裡而不是設定頁，是因為使用者不會為了找一個他不知道存在的
+            * 功能而進設定頁。而晚上那一段才是叫車需求與末班車問題的高峰。
+            */}
+          {!list.some((r) => r.label === 'home') && (
+            <button
+              type="button"
+              onClick={setup}
+              className="w-full rounded-2xl border border-dashed border-line bg-surface px-4 py-3.5 text-left"
+            >
+              <p className="text-[14px] font-semibold">
+                <span className="mr-1.5">🏠</span>
+                也設定回家那條？
+              </p>
+              <p className="mt-0.5 text-[12px] text-muted">
+                回程的末班車時間與班距都跟去程不同，設定後晚上也會收到路況提醒。
+              </p>
+            </button>
           )}
         </div>
+      ) : (
+        <EmptyRouteCard onSetup={setup} />
+      )}
 
-        {list.length > 0 ? (
-          <div className="space-y-3">
-            {list.map((r) => (
-              <FrequentRouteCard key={r.label} route={r} onEdit={setup} />
-            ))}
-
-            {/*
-              * 只設了上班那條時，提示還可以設回家那條。
-              *
-              * 放在這裡而不是設定頁，是因為使用者不會為了找一個他不知道存在的
-              * 功能而進設定頁。而晚上那一段才是叫車需求與末班車問題的高峰。
-              */}
-            {!list.some((r) => r.label === 'home') && (
-              <button
-                type="button"
-                onClick={setup}
-                className="w-full rounded-2xl border border-dashed border-line bg-surface px-4 py-3.5 text-left"
-              >
-                <p className="text-[14px] font-semibold">
-                  <span className="mr-1.5">🏠</span>
-                  也設定回家那條？
-                </p>
-                <p className="mt-0.5 text-[12px] text-muted">
-                  回程的末班車時間與班距都跟去程不同，設定後晚上也會收到路況提醒。
-                </p>
-              </button>
-            )}
+      {/*
+        * 這張卡原本只要有路線就寫「已開啟通勤提醒」。
+        * 設定頁可以關掉通知之後，那就變成謊話了 —— 使用者明明關了，
+        * 行程頁還跟他說開著。現在照著 notificationEnabled 顯示實際狀態。
+        */}
+      {route && (
+        <button
+          type="button"
+          onClick={settings}
+          className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left"
+          style={{
+            background: route.notificationEnabled
+              ? 'var(--color-primary-tint)'
+              : 'var(--color-surface-3)',
+          }}
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface text-[16px]">
+            {route.notificationEnabled ? '✨' : '🔕'}
+          </span>
+          <div>
+            <p className="text-[14px] font-semibold">
+              {route.notificationEnabled ? '已開啟通勤提醒' : '通勤提醒已關閉'}
+            </p>
+            <p className="mt-0.5 text-[12px] text-subtle">
+              {route.notificationEnabled
+                ? '捷運有事件通報時會通知你，並提供計程車替代方案'
+                : '目前不會收到路線異常的通知，點此前往設定'}
+            </p>
           </div>
-        ) : (
-          <EmptyRouteCard onSetup={setup} />
-        )}
+        </button>
+      )}
 
-        {/*
-          * 這張卡原本只要有路線就寫「已開啟通勤提醒」。
-          * 設定頁可以關掉通知之後，那就變成謊話了 —— 使用者明明關了，
-          * 行程頁還跟他說開著。現在照著 notificationEnabled 顯示實際狀態。
-          */}
-        {route && (
+      <PastTripsSection />
+    </div>
+  )
+}
+
+type TabKey = 'upcoming' | 'routes'
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'upcoming', label: '即將到來' },
+  { key: 'routes', label: '常用路線＆過往行程' },
+]
+
+export function TripsScreen() {
+  const navigate = useNavigate()
+  const { unreadCount } = useNotifications()
+  const baseId = useId()
+
+  /*
+   * 分頁記在網址上（?tab=routes），不放 state：
+   * 從常用路線卡進設定頁再按返回，要回到同一個分頁，而不是被彈回「即將到來」。
+   */
+  const [params, setParams] = useSearchParams()
+  const tab: TabKey = params.get('tab') === 'routes' ? 'routes' : 'upcoming'
+  const selectTab = (key: TabKey) => {
+    setParams(key === 'upcoming' ? {} : { tab: key }, { replace: true })
+  }
+
+  const tabId = (key: TabKey) => `${baseId}-tab-${key}`
+  const panelId = (key: TabKey) => `${baseId}-panel-${key}`
+
+  /* 左右鍵切換分頁，照 WAI-ARIA tabs 的自動啟用模式 */
+  const onTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const index = TABS.findIndex((t) => t.key === tab)
+    let next: number | null = null
+    if (e.key === 'ArrowRight') next = (index + 1) % TABS.length
+    else if (e.key === 'ArrowLeft') next = (index - 1 + TABS.length) % TABS.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = TABS.length - 1
+    if (next === null) return
+    e.preventDefault()
+    const key = TABS[next].key
+    selectTab(key)
+    document.getElementById(tabId(key))?.focus()
+  }
+
+  return (
+    /*
+     * shrink-0：外層 main 是 flex 欄，min-h-full 會蓋掉 flex 子項預設的 min-height: auto，
+     * 內容比一屏長時這個 div 被壓回一屏高、底色在捲動到一半時斷掉變白。
+     */
+    <div className="min-h-full shrink-0 bg-surface-2">
+      <header className="bg-surface px-5 pt-2">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-[26px] font-bold tracking-tight">我的行程</h1>
+            {/* 設計稿寫的是 8 月 26 日・星期三（2026 年該日確實是星期三），
+                但日期應該跟著今天走，不能寫死 */}
+            <p className="mt-1 text-[13px] text-muted">{formatDateWithWeekday()}</p>
+          </div>
           <button
             type="button"
-            onClick={() => navigate('/settings')}
-            className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left"
-            style={{
-              background: route.notificationEnabled
-                ? 'var(--color-primary-tint)'
-                : 'var(--color-surface-2)',
-            }}
+            aria-label={unreadCount > 0 ? `通知，${unreadCount} 則未讀` : '通知'}
+            onClick={() => navigate('/notifications')}
+            className="hit-area pt-1.5"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface text-[16px]">
-              {route.notificationEnabled ? '✨' : '🔕'}
-            </span>
-            <div>
-              <p className="text-[14px] font-semibold">
-                {route.notificationEnabled ? '已開啟通勤提醒' : '通勤提醒已關閉'}
-              </p>
-              <p className="mt-0.5 text-[12px] text-subtle">
-                {route.notificationEnabled
-                  ? '捷運有事件通報時會通知你，並提供計程車替代方案'
-                  : '目前不會收到路線異常的通知，點此前往設定'}
-              </p>
-            </div>
+            <BellIcon />
+            {/* 這個數字現在是真的：後端監看到的、與這個人路線相關的未讀事件 */}
+            {unreadCount > 0 && (
+              <span className="absolute -right-1.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </button>
-        )}
+        </div>
+
+        <div
+          role="tablist"
+          aria-label="行程分類"
+          onKeyDown={onTabKeyDown}
+          className="mt-3 flex border-b border-surface-4"
+        >
+          {TABS.map(({ key, label }) => {
+            const selected = key === tab
+            return (
+              <button
+                key={key}
+                id={tabId(key)}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-controls={panelId(key)}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => selectTab(key)}
+                className={`relative flex min-h-12 flex-1 items-center justify-center px-1 text-[14px] ${
+                  selected ? 'font-semibold text-ink' : 'text-muted'
+                }`}
+              >
+                {label}
+                {selected && (
+                  <span className="absolute inset-x-4 -bottom-px h-[3px] rounded-full bg-primary" />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </header>
+
+      <div
+        id={panelId(tab)}
+        role="tabpanel"
+        aria-labelledby={tabId(tab)}
+        className="px-4 py-4"
+      >
+        {tab === 'upcoming' ? <UpcomingPanel /> : <RoutesPanel />}
       </div>
     </div>
   )
