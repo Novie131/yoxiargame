@@ -73,6 +73,14 @@ export function RainyCommuteScreen() {
               </li>
             </ul>
           </TransportCard>
+          {/* 雨天通勤四頁（Figma 499:1800 起）的入口：yoxi 與捷運並排比較、逐時天氣 */}
+          <button
+            type="button"
+            onClick={() => navigate('/rainy/commute')}
+            className="mt-2 min-h-11 w-full rounded-lg border border-primary-muted bg-surface text-[14px] font-semibold text-primary transition-transform active:scale-[.98]"
+          >
+            比較 yoxi 與捷運、看逐時天氣 →
+          </button>
         </AssistantMessage>
 
         <UserMessage time="09:43 AM">好的，幫我叫車！</UserMessage>

@@ -40,7 +40,11 @@ const carTypes = [
 export function EstimateScreen() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const [selected, setSelected] = useState('sedan')
+  /* 雨天確認頁會帶 ?car= 過來，選過的車型這裡要接著用 */
+  const [selected, setSelected] = useState(() => {
+    const car = params.get('car')
+    return carTypes.some((c) => c.id === car) ? (car as string) : 'sedan'
+  })
   const location = useUserLocation()
 
   const num = (key: string) => {

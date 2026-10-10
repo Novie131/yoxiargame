@@ -21,6 +21,7 @@ import {
 } from '@/lib/location'
 import type { RidePlace } from '@/lib/ride'
 import { nearbyCars } from '@/lib/rideMap'
+import { isExplorePlanTrip } from '@/lib/explorePlan'
 import { useTrips } from '@/lib/trips'
 
 /*
@@ -133,8 +134,10 @@ export function BookingScreen() {
     const destination = route.destination
     shortcuts.push({ label: '回公司', Icon: HomeIcon, onPick: () => void search(destination) })
   }
-  if (trips[0]) {
-    const recent = trips[0].to
+  /* 探索小行程的目的地是示意店名，拿去查地點只會查到別的東西 */
+  const recentTrip = trips.find((t) => !isExplorePlanTrip(t))
+  if (recentTrip) {
+    const recent = recentTrip.to
     shortcuts.push({ label: recent, Icon: StarIcon, onPick: () => void search(recent) })
   }
 

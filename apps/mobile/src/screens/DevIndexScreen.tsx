@@ -32,6 +32,27 @@ const groups: Array<{ title: string; items: Item[] }> = [
     ],
   },
   {
+    /* 從「下雨情境」頁的「比較 yoxi 與捷運」進來；四頁彼此互連 */
+    title: '雨天通勤（yoxi 優先）',
+    items: [
+      { to: '/rainy/commute', label: '① 雨天通勤推薦', file: 'Figma 499:1800（figma/rainy-1.png）' },
+      { to: '/rainy/ride', label: '② yoxi 叫車確認', file: 'Figma 499:1916（figma/rainy-2.png）' },
+      { to: '/rainy/metro', label: '③ 捷運路線', file: 'Figma 499:2039（figma/rainy-3.png）' },
+      { to: '/rainy/weather', label: '④ 逐時天氣', file: 'Figma 499:2185（figma/rainy-4.png）' },
+    ],
+  },
+  {
+    /* 探索頁還沒有連到這裡的卡片，暫時只從這裡進 */
+    title: '探索・IG 路線',
+    items: [
+      {
+        to: '/explore/ig-route',
+        label: 'IG 路線詳情',
+        file: 'Figma 475:88（figma/ig-route-detail.png）',
+      },
+    ],
+  },
+  {
     title: '叫車流程',
     items: [
       { to: '/ride/booking', label: '① 選上車點', file: '初步確定方向/yoxi-booking.png' },
@@ -86,7 +107,9 @@ const groups: Array<{ title: string; items: Item[] }> = [
   {
     title: '探索',
     items: [
-      { to: '/explore', label: '探索首頁', file: '工作區/exploration-home-5.png（未拍板）' },
+      { to: '/explore', label: '探索首頁', file: 'Figma 536:1672 explore-v2-situational-1' },
+      { to: '/explore/plan', label: '情境小行程', file: 'Figma 536:1791 situational-2' },
+      { to: '/explore/plan/preview', label: '行程預覽', file: 'Figma 536:1894 situational-3' },
     ],
   },
   {

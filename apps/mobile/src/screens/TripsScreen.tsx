@@ -14,6 +14,7 @@ import { formatDateWithWeekday, greeting, timeAfterMinutes } from '@/lib/datetim
 import { useDeparture } from '@/lib/departure'
 import { useMember } from '@/lib/member'
 import { useNotifications } from '@/lib/notifications'
+import { isExplorePlanTrip } from '@/lib/explorePlan'
 import { formatFare } from '@/lib/ride'
 import {
   useRoutePlan,
@@ -531,10 +532,21 @@ function TripCard({ trip, actions }: { trip: PlannedTrip; actions: MenuItem[] })
           {trip.from} → {trip.to}
         </p>
         <p className="mt-1 truncate text-[12px] text-muted">
-          <span className="mr-1.5">🚇</span>
-          {trip.lines.join(' → ')}
-          {trip.transfers > 0 ? `・轉乘 ${trip.transfers} 次` : '・直達'}
-          {`・約 ${trip.totalMinutes} 分`}
+          {/* 探索小行程的分鐘數只是停留時間，交通還沒算，不能寫成直達幾分 */}
+          {isExplorePlanTrip(trip) ? (
+            <>
+              <span className="mr-1.5">📍</span>
+              {trip.lines.join(' → ')}
+              {`・停留約 ${trip.totalMinutes} 分`}
+            </>
+          ) : (
+            <>
+              <span className="mr-1.5">🚇</span>
+              {trip.lines.join(' → ')}
+              {trip.transfers > 0 ? `・轉乘 ${trip.transfers} 次` : '・直達'}
+              {`・約 ${trip.totalMinutes} 分`}
+            </>
+          )}
         </p>
       </div>
       <MoreMenu label={`${trip.from} 到 ${trip.to} 的行程選項`} items={actions} />
@@ -572,9 +584,19 @@ function PastTripRow({ trip, today }: { trip: PastTrip; today: string }) {
           {trip.from} → {trip.to}
         </p>
         <p className="mt-0.5 truncate text-[12px] text-muted">
-          <span className="mr-1.5">🚇</span>
-          捷運・{trip.lines.join(' → ')}
-          {`・約 ${trip.totalMinutes} 分`}
+          {isExplorePlanTrip(trip) ? (
+            <>
+              <span className="mr-1.5">📍</span>
+              {trip.lines.join(' → ')}
+              {`・停留約 ${trip.totalMinutes} 分`}
+            </>
+          ) : (
+            <>
+              <span className="mr-1.5">🚇</span>
+              捷運・{trip.lines.join(' → ')}
+              {`・約 ${trip.totalMinutes} 分`}
+            </>
+          )}
         </p>
       </div>
       {/*
