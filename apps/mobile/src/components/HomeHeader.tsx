@@ -22,10 +22,13 @@ export function HomeHeader({
   greeting,
   location,
   alert,
+  sky = 'sun',
 }: {
   greeting?: string
   location?: string
   alert?: { title: string; body: string } | null
+  /* 設計稿還原時的天氣圖示。雨天稿原本也畫成太陽，觀眾一眼就會看出來 */
+  sky?: 'sun' | 'rain'
 }) {
   const { displayName } = useMember()
   const weather = useWeather()
@@ -36,6 +39,12 @@ export function HomeHeader({
   /* 提示卡：外面沒指定就用即時天氣導出的提醒，沒有值得提醒的事就不顯示 */
   const card =
     alert !== undefined ? alert : weather.status === 'ready' ? weather.weather.advice : null
+  const cardSky =
+    alert === undefined && weather.status === 'ready'
+      ? weather.weather.advice?.kind === 'umbrella'
+        ? 'rain'
+        : 'sun'
+      : sky
 
   return (
     <header className="px-5 pt-3 pb-4">
@@ -58,7 +67,7 @@ export function HomeHeader({
               <>
                 <span className="min-w-0 truncate">{location}</span>
                 <span className="shrink-0">
-                  <SunIcon />
+                  {sky === 'rain' ? <RainIcon /> : <SunIcon />}
                 </span>
               </>
             ) : weather.status === 'ready' ? (
@@ -81,8 +90,13 @@ export function HomeHeader({
 
         {card && (
           <div className="flex max-w-[52%] items-center gap-2 max-[359px]:max-w-full rounded-2xl bg-surface px-3 py-2 shadow-[0_2px_10px_rgba(22,32,55,.10)]">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning-tint">
-              <SunIcon />
+            {/* 即時模式跟著真的天氣走：下雨的提醒配太陽很怪 */}
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                cardSky === 'rain' ? 'bg-primary-tint' : 'bg-warning-tint'
+              }`}
+            >
+              {cardSky === 'rain' ? <RainIcon /> : <SunIcon />}
             </span>
             {/*
               * 內文允許折兩行。單行截斷會把「建議帶傘」這種**行動**切掉，

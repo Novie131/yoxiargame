@@ -10,7 +10,7 @@ import { TransportCard } from '@/components/TransportCard'
 /*
  * 對應設計稿 frame：rainy-commute-notification
  *
- * 這一頁是**腳本化的情境還原**，對話內容照設計稿寫死（志明、09:42、板橋→市政府）。
+ * 這一頁是**腳本化的情境還原**，對話內容照設計稿寫死（小婷、09:42、板橋→市政府）。
  * 它的用途是展示「情境觸發 → 建議 → 一鍵叫車」的敘事，不是真的在跑對話。
  *
  * 但「立即叫車」之後那一段是真的：CTA 會把起訖站名帶進叫車流程，
@@ -28,8 +28,9 @@ export function RainyCommuteScreen() {
     <div className="flex h-full flex-col" style={{ background: 'var(--color-page-cool)' }}>
       <div className="bg-surface">
         <HomeHeader
-          greeting="午安，志明"
+          greeting="午安，小婷"
           location="臺北市信義區 26°C"
+          sky="rain"
           alert={{ title: '雨天通勤提醒', body: '路面濕滑改搭乘計程車' }}
         />
       </div>
@@ -40,7 +41,7 @@ export function RainyCommuteScreen() {
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
         <AssistantMessage card time="09:42 AM">
-          志明，根據氣象資料，您的通勤路線沿途目前開始下雨了！🌂
+          小婷，根據氣象資料，您的通勤路線沿途目前開始下雨了！🌂
           預計降雨將持續約 1 小時。考慮到雨天路況，建議您今天改搭計程車前往公司。
         </AssistantMessage>
 
