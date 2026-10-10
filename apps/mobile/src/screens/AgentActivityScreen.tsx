@@ -13,7 +13,7 @@ import { retryConversation, sendMessage, useConversation } from '@/lib/conversat
  * 對話從空的開始。設計稿上那三則示範訊息移除了 ——
  * 想看還原稿的版本走 /dev 的情境頁（雨天、紫外線、通勤設定）。
  *
- * 空的時候給建議問句（ChatSuggestions）：這個助理有七個工具，
+ * 空的時候給建議問句（ChatSuggestions）：這個助理有十幾個工具，
  * 但一個空白輸入框不會告訴使用者任何一個的存在。
  */
 

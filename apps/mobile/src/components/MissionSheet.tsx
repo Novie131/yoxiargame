@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router'
 
 import { CarIcon, MapPinIcon } from './icons'
 import { checkInMission, missionRelativeTo, type Mission } from '@/lib/missions'
-import { formatFare } from '@/lib/ride'
-import { useTripOptions, type TripAdvice, type TripOption } from '@/lib/tripOptions'
+import { describeTripOption, useTripOptions, type TripAdvice } from '@/lib/tripOptions'
 
 /*
  * 探索任務的詳情面板。
@@ -21,46 +20,13 @@ import { useTripOptions, type TripAdvice, type TripOption } from '@/lib/tripOpti
  * 而且它說得出「別叫車」。只會說「叫車吧」的建議就只是包裝過的推銷。
  */
 
-function optionLabel(o: TripOption): { title: string; detail: string } {
-  if (o.mode === 'walk') {
-    return {
-      title: `步行 ${o.minutes} 分鐘`,
-      detail: `約 ${o.distanceMeters >= 1000 ? `${(o.distanceMeters / 1000).toFixed(1)} 公里` : `${o.distanceMeters} 公尺`}`,
-    }
-  }
-  if (o.mode === 'metro') {
-    const legs = o.plan.legs.map((l) => l.line).join(' → ')
-    /*
-     * 票價放進標題而不是細節：時間與錢是同一個決定的兩半，
-     * 把錢藏在第二行等於還是只給了半句話。查不到就整段不顯示。
-     */
-    return {
-      title: `搭捷運 約 ${o.totalMinutes} 分鐘${o.fare ? `・NT$${o.fare.singleJourney}` : ''}`,
-      detail:
-        `走 ${o.fromStation.walkMinutes} 分到${o.fromStation.name}・${legs}` +
-        `${o.plan.transfers > 0 ? `・轉乘 ${o.plan.transfers} 次` : ''}` +
-        `・出站走 ${o.toStation.walkMinutes} 分` +
-        /* basis 要跟數字一起出現，不然使用者會以為這就是他會付的錢 */
-        (o.fare ? `・${o.fare.basis}` : ''),
-    }
-  }
-  /*
-   * 車資是依公告費率估算的，不是 yoxi 報價 —— detail 要把這件事講出來，
-   * 不然使用者會以為這是已經談好的價錢。
-   */
-  return {
-    title: `叫車 約 ${o.estimate.durationMinutes} 分鐘`,
-    detail: `${formatFare(o.estimate.fare)}・${o.estimate.distanceKm} 公里・依公告費率估算`,
-  }
-}
-
 /*
  * 「值不值得」的一句話。
  *
  * 兩種 verdict 用不同的配色，而且**勸退那一種不能比較不顯眼** ——
  * 把「別叫車」畫得比「叫車吧」淡，就是用視覺把立場偷渡回去。
  */
-function AdviceLine({ advice }: { advice: TripAdvice }) {
+export function AdviceLine({ advice }: { advice: TripAdvice }) {
   const suggestsRide = advice.verdict === 'ride'
   return (
     <div
@@ -263,7 +229,7 @@ export function MissionSheet({
             {origin && trip.status === 'ready' && (
               <ul className="mt-2 space-y-2">
                 {trip.data.options.map((o, i) => {
-                  const { title, detail } = optionLabel(o)
+                  const { title, detail } = describeTripOption(o)
                   const isRide = o.mode === 'ride'
                   return (
                     <li key={o.mode}>

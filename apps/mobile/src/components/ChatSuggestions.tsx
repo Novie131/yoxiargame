@@ -5,7 +5,7 @@ import { INTERESTS, useInterests } from '@/lib/interests'
  * 對話的開場建議。
  *
  * 在這之前首頁是一片空白 —— 只有問候語跟一個輸入框。
- * 這個助理背後有七個工具（天氣、路線規劃、叫車估價、找活動、存通勤路線…），
+ * 這個助理背後有一整組工具（天氣、路線規劃、交通比較、找店家與活動、存通勤路線…），
  * 但使用者沒有任何線索知道它們存在，只能猜著問。
  *
  * 這不只是 demo 的開場問題。空白輸入框是對話式介面最常見的失敗：
@@ -47,7 +47,7 @@ function suggestionsFor(
       text: `從${commuteOrigin}叫車到公司大概多少錢？`,
     })
   } else {
-    list.push({ label: '叫車到臺北101要多少錢？', text: '叫車到臺北101大概要多少錢？' })
+    list.push({ label: '去臺北101搭捷運還是叫車好？', text: '去臺北101搭捷運還是叫車比較好？' })
   }
 
   list.push({
@@ -98,7 +98,7 @@ export function ChatSuggestions({ onPick }: { onPick: (text: string) => void }) 
         */}
       <p className="mt-3 text-[12px] leading-[1.7] text-subtle">
         我知道你在哪、天氣如何、捷運與公車此刻的狀況，
-        也可以幫你規劃路線、估車資、找附近的活動。
+        也可以幫你比較怎麼去最划算、找附近的店和活動。
       </p>
     </div>
   )

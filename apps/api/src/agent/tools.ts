@@ -2,8 +2,17 @@ import { tool } from 'ai'
 import { z } from 'zod'
 
 import { hasDatabase } from '../db/client.ts'
+import { findActiveCommunityDay } from '../db/repositories/communityDay.ts'
 import { findNearbyMissions } from '../db/repositories/missions.ts'
+import { USER_REF_PROVIDER } from '../identity.ts'
+import { planItinerary } from '../services/community-day.ts'
 import { readRoutes, saveRoute } from '../services/commute.ts'
+import {
+  findNearbyPlaces,
+  PLACE_CATEGORIES,
+  PLACE_CATEGORY_IDS,
+} from '../services/nearby-places.ts'
+import { compareTripOptions } from '../services/trip-options.ts'
 import {
   resolvePlaceName,
   resolveUserLocation,
@@ -161,6 +170,15 @@ const sharedTools = {
   }),
 }
 
+/* 興趣標籤。值必須跟 missions.tags 與前端 interests.ts 一致，對不上會篩不到東西。 */
+const INTEREST_IDS = [
+  'food', 'travel', 'sport', 'music', 'photo',
+  'reading', 'movie', 'tech', 'bar', 'coffee',
+] as const
+
+/* 社群日要在多近才算「這附近」。跟 /campaigns/today 的預設半徑一致。 */
+const COMMUNITY_DAY_RADIUS_M = 3_000
+
 /**
  * 綁定這一次請求的工具集。
  * userRef 來自 identity.readUserRef；location 是前端帶進來的定位，可能沒有。
@@ -175,6 +193,33 @@ export function createTools(userRef: string, location?: UserLocation | null) {
     if (!location) return null
     currentPlace ??= resolveUserLocation(location)
     return currentPlace
+  }
+
+  /* 查任務進度、社群日完成狀態時用的身分。跟 /campaigns/today 同一套。 */
+  const user = { provider: USER_REF_PROVIDER, externalRef: userRef }
+
+  /*
+   * 使用者附近進行中的社群日，排好行程。plan_itinerary 與 get_mission_progress 共用 ——
+   * 兩邊各查一次的話，「還剩幾站」在行程卡與進度卡上可能對不起來。
+   *
+   * 只看使用者**自己的位置**，不接受地名：社群日的行程是從他現在站的地方排起的，
+   * 換成別的地名排出來的第一段距離就是錯的。
+   */
+  const communityDay = async () => {
+    if (!hasDatabase()) return { failure: { error: '活動資料庫未設定' } } as const
+    const origin = await here()
+    if (!origin) return { failure: needLocation('找你附近進行中的活動') } as const
+
+    const day = await findActiveCommunityDay(origin.lat, origin.lon, COMMUNITY_DAY_RADIUS_M, user)
+    if (!day) {
+      return {
+        failure: {
+          active: false,
+          note: '附近目前沒有進行中的社群日活動。用一句話照實告訴使用者，不要推薦別的活動代替',
+        },
+      } as const
+    }
+    return { day, itinerary: planItinerary(day, origin) } as const
   }
 
   /* 有給地名就查地名，沒給就用當前位置。兩者都沒有時回 null。 */
@@ -590,12 +635,7 @@ export function createTools(userRef: string, location?: UserLocation | null) {
               '使用者說「附近」「這裡」時**不要帶**，系統會用他的定位。',
           ),
         interests: z
-          .array(
-            z.enum([
-              'food', 'travel', 'sport', 'music', 'photo',
-              'reading', 'movie', 'tech', 'bar', 'coffee',
-            ]),
-          )
+          .array(z.enum(INTEREST_IDS))
           .optional()
           .describe(
             '興趣標籤，用來過濾任務。使用者有講偏好才帶（「想喝咖啡」→ coffee）。' +
@@ -626,6 +666,7 @@ export function createTools(userRef: string, location?: UserLocation | null) {
             3000,
             10,
             interests,
+            user,
           )
 
           return {
@@ -648,6 +689,9 @@ export function createTools(userRef: string, location?: UserLocation | null) {
               /* 座標是給前端的任務卡用的：沒有它就按不了「叫車前往」 */
               lat: m.lat,
               lon: m.lon,
+              /* 任務哪時候結束。卡片要講得出「還能做到什麼時候」，null = 沒有期限 */
+              ends_at: m.endsAt,
+              completed: m.status === 'completed',
             })),
             /* 模型要知道這批距離是不是「離使用者」的距離 */
             area_is_user_location: resolved.source === 'coordinates',
@@ -805,6 +849,250 @@ export function createTools(userRef: string, location?: UserLocation | null) {
         } catch (error) {
           console.error('[get_commute_route]', error)
           return { configured: false, routes: [], route: null, error: '讀取通勤路線失敗' }
+        }
+      },
+    }),
+
+    search_places: tool({
+      description:
+        '找某個地點附近的店家或景點（咖啡廳、書店、餐廳、甜點、酒吧、公園、展覽、景點），' +
+        '回傳店名、距離、營業時間與地址。使用者問「附近有什麼咖啡廳」「推薦一間書店」' +
+        '「這附近有什麼好逛的」時使用。要找的是**探索任務**時用 search_activities。',
+      inputSchema: z.object({
+        category: z
+          .enum(PLACE_CATEGORY_IDS)
+          .describe(
+            '種類：cafe 咖啡廳、bookstore 書店、restaurant 餐廳、dessert 甜點、' +
+              'bar 酒吧、park 公園、museum 博物館與展覽、attraction 景點。',
+          ),
+        area: z
+          .string()
+          .optional()
+          .describe('地點，例如「赤峰街」「大安區」。使用者說「附近」「這裡」時**不要帶**。'),
+      }),
+      /*
+       * OSM 的資料參差不齊：連鎖店通常很完整，巷弄小店常常只有店名。
+       * 缺的欄位就是 null，模型不可以自己補營業時間或地址。
+       */
+      execute: async ({ category, area }) => {
+        try {
+          const resolved = await resolve(area)
+          if (!resolved) {
+            return area
+              ? { area, error: `查不到「${area}」這個地點` }
+              : needLocation('找你附近的店家')
+          }
+
+          const places = await findNearbyPlaces(resolved.lat, resolved.lon, category)
+          return {
+            area: resolved.label,
+            category,
+            category_label: PLACE_CATEGORIES[category].label,
+            data_source: 'openstreetmap',
+            count: places.length,
+            places: places.map((p) => ({
+              id: p.id,
+              name: p.name,
+              distance_from_area_meters: p.distanceMeters,
+              opening_hours: p.openingHours,
+              address: p.address,
+              phone: p.phone,
+              website: p.website,
+              /* 給卡片的「怎麼去」按鈕用 */
+              lat: p.lat,
+              lon: p.lon,
+            })),
+            note: '資料來自 OpenStreetMap，營業時間可能未更新。沒有的欄位就是沒有，不要補',
+          }
+        } catch (error) {
+          console.error('[search_places]', error)
+          return { area: area ?? null, error: '店家搜尋暫時無法使用' }
+        }
+      },
+    }),
+
+    compare_trip_options: tool({
+      description:
+        '比較兩地之間走路、搭捷運、叫車三種方式的時間與花費，並給一句「值不值得叫車」的建議。' +
+        '使用者問「怎麼去比較好」「要不要叫車」「搭捷運還是叫車」「哪個比較快」時使用。' +
+        '使用者只想知道捷運要怎麼搭、在哪轉車時改用 plan_route。',
+      inputSchema: z.object({
+        from: z
+          .string()
+          .optional()
+          .describe('出發地。使用者說「從這裡」或沒講時**不要帶**，系統會用他的定位。'),
+        to: z.string().describe('目的地的地名或地標，例如「臺北101」'),
+      }),
+      /*
+       * 排序照實際時間，不會因為「建議」而變動 —— 理由在 services/trip-options.ts。
+       * 這個工具的立場是讓使用者自己選，不是替叫車拉客。
+       */
+      execute: async ({ from, to }) => {
+        try {
+          const [origin, destination] = await Promise.all([resolve(from), resolvePlaceName(to)])
+          if (!origin) {
+            return from
+              ? { from, to, error: `查不到「${from}」這個地點` }
+              : needLocation('比較從你現在的位置出發的交通方式')
+          }
+          if (!destination) return { from: origin.label, to, error: `查不到「${to}」這個地點` }
+
+          const result = await compareTripOptions(
+            origin.lat,
+            origin.lon,
+            destination.lat,
+            destination.lon,
+          )
+
+          return {
+            from: origin.label,
+            /* 卡片上「捷運怎麼搭」要知道該問「從我這裡」還是從某個地名 */
+            from_is_user_location: !from?.trim(),
+            to: destination.label,
+            to_lat: destination.lat,
+            to_lon: destination.lon,
+            distance_meters: result.distanceMeters,
+            arrived: result.arrived,
+            /* 已依實際時間排好，第一個最快 */
+            options: result.options.map((o) =>
+              o.mode === 'walk'
+                ? { mode: 'walk', minutes: o.minutes, distance_meters: o.distanceMeters }
+                : o.mode === 'metro'
+                  ? {
+                      mode: 'metro',
+                      minutes: o.totalMinutes,
+                      from_station: o.fromStation.name,
+                      to_station: o.toStation.name,
+                      walk_minutes: o.fromStation.walkMinutes + o.toStation.walkMinutes,
+                      transfers: o.plan.transfers,
+                      lines: [...new Set(o.plan.legs.map((l) => l.line))],
+                      fare_twd: o.fare?.singleJourney ?? null,
+                    }
+                  : {
+                      mode: 'ride',
+                      minutes: o.estimate.durationMinutes,
+                      fare_twd: o.estimate.fare,
+                      basis: o.estimate.basis,
+                    },
+            ),
+            advice: result.advice,
+            note: '捷運時間不含等第一班車；叫車是依公告費率估算，不是 yoxi 報價',
+          }
+        } catch (error) {
+          console.error('[compare_trip_options]', error)
+          return { from: from ?? null, to, error: '交通方式比較暫時無法使用' }
+        }
+      },
+    }),
+
+    plan_itinerary: tool({
+      description:
+        '把使用者附近正在進行的社群日活動的任務點，排成一條從他現在位置出發、跑得完的行程，' +
+        '每一段標明走路或值得叫車。使用者說「幫我排路線」「這個活動要怎麼逛」' +
+        '「把附近的任務串起來」時使用。只排社群日活動，不排一般的店家或景點。',
+      inputSchema: z.object({}),
+      execute: async () => {
+        try {
+          const result = await communityDay()
+          if ('failure' in result) return result.failure
+
+          const { itinerary } = result
+          return {
+            active: true,
+            campaign: itinerary.name,
+            ends_at: itinerary.endsAt,
+            completed: itinerary.completed,
+            remaining: itinerary.remaining,
+            /* 熱度，不是可以共乘的人 —— 不要講成「有 N 個人可以一起」 */
+            participants_today: itinerary.participantsToday,
+            legs: itinerary.legs.map((l) => ({
+              order: l.order,
+              mission_id: l.mission.id,
+              name: l.mission.name,
+              lat: l.mission.lat,
+              lon: l.mission.lon,
+              distance_meters: l.distanceMeters,
+              mode: l.mode,
+              walk_minutes: l.walkMinutes,
+              ride_minutes: l.ride?.durationMinutes ?? null,
+              ride_fare_twd: l.ride?.fare ?? null,
+            })),
+            total_walk_minutes: itinerary.totalWalkMinutes,
+            basis: itinerary.basis,
+            /* 有叫車段時，車資怎麼估的要跟著顯示 */
+            ride_basis: itinerary.legs.find((l) => l.ride)?.ride?.basis ?? null,
+          }
+        } catch (error) {
+          console.error('[plan_itinerary]', error)
+          return { error: '行程規劃暫時無法使用' }
+        }
+      },
+    }),
+
+    get_mission_progress: tool({
+      description:
+        '查使用者在附近社群日活動的任務進度：完成幾站、還剩幾站、下一站是哪裡。' +
+        '使用者問「我任務做到哪了」「還差幾個」「下一站去哪」時使用。',
+      inputSchema: z.object({}),
+      /*
+       * 沒有獎勵資料 —— 資料庫裡沒有任何獎勵或點數的欄位。
+       * 模型不可以自己編「完成可得 N 點」，那是使用者會跑去兌換的東西。
+       */
+      execute: async () => {
+        try {
+          const result = await communityDay()
+          if ('failure' in result) return result.failure
+
+          const { day, itinerary } = result
+          const next = itinerary.legs[0] ?? null
+          return {
+            active: true,
+            campaign: day.name,
+            ends_at: day.endsAt,
+            total: day.missions.length,
+            completed: day.missions.filter((m) => m.completed).length,
+            stops: day.missions.map((m) => ({ name: m.name, completed: m.completed })),
+            next: next && {
+              mission_id: next.mission.id,
+              name: next.mission.name,
+              lat: next.mission.lat,
+              lon: next.mission.lon,
+              distance_meters: next.distanceMeters,
+            },
+            note: '沒有獎勵資料，不要提到點數、折價券或任何獎勵',
+          }
+        } catch (error) {
+          console.error('[get_mission_progress]', error)
+          return { error: '任務進度暫時無法取得' }
+        }
+      },
+    }),
+
+    suggest_interests: tool({
+      description:
+        '使用者想調整自己的興趣偏好時（「以後多推咖啡廳給我」「我不喜歡酒吧，別推了」），' +
+        '提出要加入或移除的興趣標籤。**這個工具不會直接存**，' +
+        '畫面會出一張確認卡，使用者按下確認才會生效。',
+      inputSchema: z.object({
+        add: z.array(z.enum(INTEREST_IDS)).optional().describe('要加入的興趣'),
+        remove: z.array(z.enum(INTEREST_IDS)).optional().describe('要移除的興趣'),
+      }),
+      /*
+       * 為什麼不直接存：興趣決定了之後主動推給他什麼，猜錯的代價是一整天的錯誤推播。
+       * 而且興趣的正本在前端（interests.ts 的 localStorage），後端只是副本 ——
+       * 從這裡寫進資料庫的話，下次前端同步時就會被蓋回去。
+       */
+      execute: async ({ add, remove }) => {
+        const toAdd = [...new Set(add ?? [])]
+        const toRemove = [...new Set(remove ?? [])].filter((id) => !toAdd.includes(id))
+        if (toAdd.length === 0 && toRemove.length === 0) {
+          return { error: '沒有要調整的興趣' }
+        }
+        return {
+          pending_confirmation: true,
+          add: toAdd,
+          remove: toRemove,
+          note: '還沒有存。只說「按確認後生效」，不要用「已經」「已幫你」這類說法 —— 使用者還沒同意',
         }
       },
     }),

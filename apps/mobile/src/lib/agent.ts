@@ -101,6 +101,9 @@ export type MissionsCard = {
     distanceFromAreaMeters: number
     lat: number
     lon: number
+    /* 舊版後端不會送這兩個欄位 —— 沒有就當作沒有期限、還沒完成 */
+    endsAt?: string | null
+    completed?: boolean
   }>
 }
 
@@ -136,6 +139,108 @@ export type RideEstimateCard = {
   basis: string
 }
 
+/* 附近的店家。資料來自 OpenStreetMap，沒有的欄位是 null，卡片照實留白。 */
+export type PlacesCard = {
+  kind: 'places'
+  area: string
+  categoryLabel: string
+  /** 由近到遠。卡片一次顯示一家，其餘是「換一個」的備選。 */
+  places: Array<{
+    id: string
+    name: string
+    distanceMeters: number
+    openingHours: string | null
+    address: string | null
+    lat: number
+    lon: number
+  }>
+  basis: string
+}
+
+export type TripOptionSummary =
+  | { mode: 'walk'; minutes: number; distanceMeters: number }
+  | {
+      mode: 'metro'
+      minutes: number
+      fromStation: string
+      toStation: string
+      transfers: number
+      lines: string[]
+      fareTwd: number | null
+    }
+  | { mode: 'ride'; minutes: number; fare: { min: number; max: number }; basis: string }
+
+/* 走路、捷運、叫車並排。排序照實際時間，第一個最快。 */
+export type TripOptionsCard = {
+  kind: 'trip_options'
+  from: string
+  /** from 是不是使用者自己的位置（那時 from 是反向地理編碼出來的地名） */
+  fromIsHere: boolean
+  to: string
+  /** 給叫車按鈕用。0 代表後端沒給座標。 */
+  toLat: number
+  toLon: number
+  options: TripOptionSummary[]
+  advice: { verdict: 'ride' | 'transit'; headline: string; reason: string } | null
+  basis: string
+}
+
+/* 社群日活動的任務點排成一條行程 */
+export type ItineraryCard = {
+  kind: 'itinerary'
+  campaign: string
+  endsAt: string | null
+  completed: number
+  remaining: number
+  legs: Array<{
+    order: number
+    missionId: string
+    name: string
+    lat: number
+    lon: number
+    distanceMeters: number
+    mode: 'walk' | 'ride'
+    walkMinutes: number
+    rideMinutes: number | null
+    rideFare: { min: number; max: number } | null
+  }>
+  totalWalkMinutes: number
+  basis: string
+  rideBasis: string | null
+}
+
+/* 社群日任務進度。資料庫沒有獎勵資料，所以卡片上沒有獎勵。 */
+export type MissionProgressCard = {
+  kind: 'mission_progress'
+  campaign: string
+  endsAt: string | null
+  total: number
+  completed: number
+  stops: Array<{ name: string; completed: boolean }>
+  next: { missionId: string; name: string; lat: number; lon: number; distanceMeters: number } | null
+}
+
+/*
+ * 興趣調整的確認卡。後端**沒有存**，使用者按確認才寫進 interests.ts ——
+ * 興趣的正本在本機，從後端寫的話下次同步就會被蓋回去。
+ */
+export type InterestChangeCard = {
+  kind: 'interest_change'
+  add: string[]
+  remove: string[]
+}
+
+/*
+ * 執行結果。狀態本身由 planned_trip / commute_route 事件更新，
+ * 這張卡只是讓使用者看得到存了什麼、按得到去哪裡看。
+ */
+export type ResultCard = {
+  kind: 'result'
+  subject: 'trip' | 'commute_route'
+  title: string
+  detail: string
+}
+
 export type AgentCard =
   | RoutePlanCard
   | WeatherCard
@@ -144,6 +249,12 @@ export type AgentCard =
   | RideEstimateCard
   | LocationRequestCard
   | NoticeCard
+  | PlacesCard
+  | TripOptionsCard
+  | ItineraryCard
+  | MissionProgressCard
+  | InterestChangeCard
+  | ResultCard
 
 /** 模型把一趟行程加進「今天的行程」。形狀必須跟後端的 PlannedTripEvent 一致。 */
 export type PlannedTripEvent = {
@@ -162,6 +273,28 @@ export type AgentEvent =
   | { type: 'planned_trip'; trip: PlannedTripEvent }
   | { type: 'card'; card: AgentCard }
   | { type: 'error'; message: string }
+
+/*
+ * 前端畫得出來的卡片種類。用 Record 列舉而不是手寫 ||：
+ * AgentCard 加了新種類卻忘了加進來時，型別檢查會擋下來 ——
+ * 之前 ride_estimate 就是這樣漏掉，叫車估價卡一直被安靜丟棄。
+ */
+const CARD_KIND_LIST: Record<AgentCard['kind'], true> = {
+  route_plan: true,
+  weather: true,
+  missions: true,
+  ride_estimate: true,
+  transit_status: true,
+  location_request: true,
+  notice: true,
+  places: true,
+  trip_options: true,
+  itinerary: true,
+  mission_progress: true,
+  interest_change: true,
+  result: true,
+}
+const CARD_KINDS = new Set<string>(Object.keys(CARD_KIND_LIST))
 
 /* 一行 JSON → 事件。不認得的形狀一律忽略，後端加新事件時舊前端也不會壞。 */
 function parseEvent(line: string): AgentEvent | null {
@@ -200,14 +333,7 @@ function parseEvent(line: string): AgentEvent | null {
      */
     if (typeof card === 'object' && card !== null) {
       const kind = (card as { kind?: unknown }).kind
-      if (
-        kind === 'route_plan' ||
-        kind === 'weather' ||
-        kind === 'missions' ||
-        kind === 'transit_status' ||
-        kind === 'location_request' ||
-        kind === 'notice'
-      ) {
+      if (typeof kind === 'string' && CARD_KINDS.has(kind)) {
         return { type: 'card', card: card as AgentCard }
       }
     }

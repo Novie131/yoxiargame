@@ -9,6 +9,7 @@ import type {
 import { useEffect, useState } from 'react'
 
 import { api, coordsQuery } from './client'
+import { formatFare } from './ride'
 
 /*
  * 「怎麼去」的選項，資料來自後端的 /trip/options。
@@ -77,4 +78,38 @@ export function useTripOptions(
   if (cached) return { status: 'ready', data: cached }
 
   return result?.key === key ? result.state : { status: 'loading' }
+}
+
+/** 一個選項 → 畫面上的兩行字。探索頁的任務面板與對話裡的店家卡共用。 */
+export function describeTripOption(o: TripOption): { title: string; detail: string } {
+  if (o.mode === 'walk') {
+    return {
+      title: `步行 ${o.minutes} 分鐘`,
+      detail: `約 ${o.distanceMeters >= 1000 ? `${(o.distanceMeters / 1000).toFixed(1)} 公里` : `${o.distanceMeters} 公尺`}`,
+    }
+  }
+  if (o.mode === 'metro') {
+    const legs = o.plan.legs.map((l) => l.line).join(' → ')
+    /*
+     * 票價放進標題而不是細節：時間與錢是同一個決定的兩半，
+     * 把錢藏在第二行等於還是只給了半句話。查不到就整段不顯示。
+     */
+    return {
+      title: `搭捷運 約 ${o.totalMinutes} 分鐘${o.fare ? `・NT$${o.fare.singleJourney}` : ''}`,
+      detail:
+        `走 ${o.fromStation.walkMinutes} 分到${o.fromStation.name}・${legs}` +
+        `${o.plan.transfers > 0 ? `・轉乘 ${o.plan.transfers} 次` : ''}` +
+        `・出站走 ${o.toStation.walkMinutes} 分` +
+        /* basis 要跟數字一起出現，不然使用者會以為這就是他會付的錢 */
+        (o.fare ? `・${o.fare.basis}` : ''),
+    }
+  }
+  /*
+   * 車資是依公告費率估算的，不是 yoxi 報價 —— detail 要把這件事講出來，
+   * 不然使用者會以為這是已經談好的價錢。
+   */
+  return {
+    title: `叫車 約 ${o.estimate.durationMinutes} 分鐘`,
+    detail: `${formatFare(o.estimate.fare)}・${o.estimate.distanceKm} 公里・依公告費率估算`,
+  }
 }

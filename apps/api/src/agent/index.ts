@@ -20,12 +20,13 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
   畫面是對話氣泡，不會渲染 Markdown，寫了只會變成一堆星號跟井字。
 
 卡片規則（很重要）：
-- 呼叫 plan_route、get_weather、search_activities、get_transit_status 之後，畫面會自動把
-  結果排版成卡片。卡片上已經有：站名、每一段搭哪條線、幾站、幾分鐘、轉乘次數、
-  兩端步行時間、其他可選路線、氣溫、體感、紫外線、穿著與帶傘建議、任務名稱、距離、
-  以及可以直接按的叫車鈕。
-- 這四個工具的結果，你的文字回覆**最多兩句**，而且不可以出現卡片上已有的
-  站名、路線名、站數、分鐘數、距離、溫度或建議文字。使用者看得到那些，再念一遍只是噪音。
+- 除了 get_commute_route 以外，每個工具的結果畫面都會自動排版成卡片。卡片上已經有：
+  站名、每一段搭哪條線、幾站、幾分鐘、轉乘次數、兩端步行時間、其他可選路線、
+  氣溫、體感、紫外線、穿著與帶傘建議、任務名稱、距離、店名、營業時間、地址、
+  走路／捷運／叫車的時間與車資、行程每一站、任務進度，以及可以直接按的按鈕。
+- 有卡片的結果，你的文字回覆**最多兩句**，而且不可以出現卡片上已有的
+  站名、路線名、站數、分鐘數、距離、溫度、車資、店名、地址或建議文字。
+  使用者看得到那些，再念一遍只是噪音。
 - 你要補的是卡片給不了的東西：判斷與提醒。
   好的例子：「這段要換一次線，尖峰時段可以多抓五分鐘。」
   好的例子：「另一條路線慢三分鐘但不用轉車，帶行李的話可以考慮。」
@@ -59,6 +60,16 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
   直接呼叫 save_commute_route 存起來，不要反問路線名 —— 系統會自己從起訖站推出來。
   存好之後用一句話確認存了哪一條，並說明之後有異常會通知他。
 - 起訖站需要轉乘時（工具會回 transfer_required），要照實提醒使用者中途要換線。
+- 使用者問「怎麼去比較好」「要不要叫車」「搭捷運還是叫車」時用 compare_trip_options；
+  他只是要知道捷運怎麼搭、在哪轉車時用 plan_route。兩個不要同時呼叫。
+  compare_trip_options 的 advice 可能是「不值得叫車」，照實講，不要替叫車說話。
+- 使用者要找店家或景點（咖啡廳、書店、餐廳、公園）用 search_places；
+  要找探索任務用 search_activities。店家資料沒有的欄位（營業時間、地址）就是沒有，不要補。
+- 社群日活動：要排路線用 plan_itinerary，問進度用 get_mission_progress。
+  工具回 active 為 false 代表附近沒有活動，照實說就好，不要推薦別的活動代替。
+  沒有任何獎勵資料，絕對不要提點數、折價券或獎勵。
+- 使用者想調整興趣偏好時呼叫 suggest_interests。它**不會直接存**，
+  要請使用者在卡片上按確認，不可以說「已經幫你設定好了」。
 - 存好通勤路線之後，如果使用者還沒講通勤時段，順帶問一次「平常大概幾點出門、幾點回家」。
   這是為了不要在半夜打擾他。使用者不想講就算了，不要追問第二次。
   他講了之後再呼叫一次 save_commute_route，把時段一起帶上。
@@ -261,6 +272,9 @@ export type AgentCard =
         distanceFromAreaMeters: number
         lat: number
         lon: number
+        /** null = 沒有期限 */
+        endsAt: string | null
+        completed: boolean
       }>
     }
   /*
@@ -311,6 +325,103 @@ export type AgentCard =
    * 所以把真相放進畫面：不管模型講什麼，使用者都看得到「這次沒查到」。
    */
   | { kind: 'notice'; message: string }
+  /*
+   * 附近的店家（search_places）。資料來自 OpenStreetMap，
+   * 缺的欄位是 null —— 卡片照實留白，不要補。
+   */
+  | {
+      kind: 'places'
+      area: string
+      categoryLabel: string
+      /** 由近到遠。卡片一次顯示一家，其餘是「換一個」的備選。 */
+      places: Array<{
+        id: string
+        name: string
+        distanceMeters: number
+        openingHours: string | null
+        address: string | null
+        lat: number
+        lon: number
+      }>
+      basis: string
+    }
+  /*
+   * 走路、捷運、叫車三種方式並排（compare_trip_options）。
+   * 排序照實際時間，建議只是一行字，不會把叫車排到前面。
+   */
+  | {
+      kind: 'trip_options'
+      from: string
+      /** from 是不是使用者自己的位置（那時 from 是反向地理編碼出來的地名） */
+      fromIsHere: boolean
+      to: string
+      toLat: number
+      toLon: number
+      options: TripOptionSummary[]
+      advice: { verdict: 'ride' | 'transit'; headline: string; reason: string } | null
+      basis: string
+    }
+  /* 社群日活動的任務點排成一條行程（plan_itinerary） */
+  | {
+      kind: 'itinerary'
+      campaign: string
+      endsAt: string | null
+      completed: number
+      remaining: number
+      legs: Array<{
+        order: number
+        missionId: string
+        name: string
+        lat: number
+        lon: number
+        distanceMeters: number
+        mode: 'walk' | 'ride'
+        walkMinutes: number
+        rideMinutes: number | null
+        rideFare: { min: number; max: number } | null
+      }>
+      totalWalkMinutes: number
+      basis: string
+      /** 有叫車段時才有 */
+      rideBasis: string | null
+    }
+  /* 社群日任務進度（get_mission_progress）。沒有獎勵資料，所以卡片上沒有獎勵。 */
+  | {
+      kind: 'mission_progress'
+      campaign: string
+      endsAt: string | null
+      total: number
+      completed: number
+      stops: Array<{ name: string; completed: boolean }>
+      next: { missionId: string; name: string; lat: number; lon: number; distanceMeters: number } | null
+    }
+  /*
+   * 興趣調整的確認卡（suggest_interests）。
+   * 工具本身不存 —— 使用者在卡片上按確認，前端才寫進 interests.ts。
+   */
+  | { kind: 'interest_change'; add: string[]; remove: string[] }
+  /*
+   * 執行結果（save_trip、save_commute_route 成功時）。
+   *
+   * 狀態本身仍由 planned_trip / commute_route 事件更新；這張卡是給使用者
+   * 一個看得到、按得到的確認 —— 只靠模型一句「好了」，他不知道存去哪、
+   * 也沒辦法馬上去看或改。
+   */
+  | { kind: 'result'; subject: 'trip' | 'commute_route'; title: string; detail: string }
+
+/** trip_options 卡的一個選項。前端照 mode 排版。 */
+export type TripOptionSummary =
+  | { mode: 'walk'; minutes: number; distanceMeters: number }
+  | {
+      mode: 'metro'
+      minutes: number
+      fromStation: string
+      toStation: string
+      transfers: number
+      lines: string[]
+      fareTwd: number | null
+    }
+  | { mode: 'ride'; minutes: number; fare: { min: number; max: number }; basis: string }
 
 /*
  * 使用者明講「把這條加到行程」時，模型呼叫 save_trip，結果由這個事件送到前端。
@@ -548,6 +659,8 @@ function toMissionsCard(output: unknown): AgentCard | null {
         distanceFromAreaMeters: asNumber(m.distance_from_area_meters) ?? 0,
         lat,
         lon,
+        endsAt: asString(m.ends_at),
+        completed: m.completed === true,
       },
     ]
   })
@@ -622,6 +735,235 @@ function toTransitStatusCard(output: unknown): AgentCard | null {
   }
 }
 
+function asFare(v: unknown): { min: number; max: number } | null {
+  const f = asRecord(v)
+  const min = f && asNumber(f.min)
+  const max = f && asNumber(f.max)
+  return min !== null && min !== undefined && max !== null && max !== undefined
+    ? { min, max }
+    : null
+}
+
+const PLACES_BASIS = '店家資料來自 OpenStreetMap，營業時間可能未更新；距離為直線距離'
+
+function toPlacesCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error || !Array.isArray(o.places)) return null
+
+  const places = o.places.flatMap((raw) => {
+    const p = asRecord(raw)
+    const id = p && asString(p.id)
+    const name = p && asString(p.name)
+    const lat = p && asNumber(p.lat)
+    const lon = p && asNumber(p.lon)
+    if (!id || !name || lat === null || lon === null) return []
+    return [
+      {
+        id,
+        name,
+        distanceMeters: asNumber(p.distance_from_area_meters) ?? 0,
+        openingHours: asString(p.opening_hours),
+        address: asString(p.address),
+        lat,
+        lon,
+      },
+    ]
+  })
+  /* 一家都沒有時讓模型用文字說，空卡片沒有意義 */
+  if (places.length === 0) return null
+
+  return {
+    kind: 'places',
+    area: asString(o.area) ?? '',
+    categoryLabel: asString(o.category_label) ?? '',
+    places,
+    basis: PLACES_BASIS,
+  }
+}
+
+function toTripOptionsCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error || !Array.isArray(o.options)) return null
+
+  const from = asString(o.from)
+  const to = asString(o.to)
+  if (!from || !to) return null
+
+  const options = o.options.flatMap((raw): TripOptionSummary[] => {
+    const r = asRecord(raw)
+    const minutes = r && asNumber(r.minutes)
+    if (!r || minutes === null || minutes === undefined) return []
+    if (r.mode === 'walk') {
+      return [{ mode: 'walk', minutes, distanceMeters: asNumber(r.distance_meters) ?? 0 }]
+    }
+    if (r.mode === 'metro') {
+      const fromStation = asString(r.from_station)
+      const toStation = asString(r.to_station)
+      if (!fromStation || !toStation) return []
+      return [
+        {
+          mode: 'metro',
+          minutes,
+          fromStation,
+          toStation,
+          transfers: asNumber(r.transfers) ?? 0,
+          lines: Array.isArray(r.lines)
+            ? r.lines.filter((l): l is string => typeof l === 'string')
+            : [],
+          fareTwd: asNumber(r.fare_twd),
+        },
+      ]
+    }
+    if (r.mode === 'ride') {
+      const fare = asFare(r.fare_twd)
+      const basis = asString(r.basis)
+      /* 沒有 basis 的車資不顯示 —— 理由同 ride_estimate 卡 */
+      if (!fare || !basis) return []
+      return [{ mode: 'ride', minutes, fare, basis }]
+    }
+    return []
+  })
+  /* 已經到了（arrived）或一個選項都沒有時，讓模型用文字講 */
+  if (options.length === 0) return null
+
+  const a = asRecord(o.advice)
+  const headline = a && asString(a.headline)
+  const verdict: 'ride' | 'transit' | null =
+    a?.verdict === 'ride' ? 'ride' : a?.verdict === 'transit' ? 'transit' : null
+  const advice =
+    a && headline && verdict ? { verdict, headline, reason: asString(a.reason) ?? '' } : null
+
+  return {
+    kind: 'trip_options',
+    from,
+    fromIsHere: o.from_is_user_location === true,
+    to,
+    toLat: asNumber(o.to_lat) ?? 0,
+    toLon: asNumber(o.to_lon) ?? 0,
+    options,
+    advice,
+    basis: asString(o.note) ?? '',
+  }
+}
+
+function toItineraryCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error || o.active !== true || !Array.isArray(o.legs)) return null
+
+  const campaign = asString(o.campaign)
+  const basis = asString(o.basis)
+  if (!campaign || !basis) return null
+
+  const legs = o.legs.flatMap((raw) => {
+    const l = asRecord(raw)
+    const order = l && asNumber(l.order)
+    const missionId = l && asString(l.mission_id)
+    const name = l && asString(l.name)
+    const lat = l && asNumber(l.lat)
+    const lon = l && asNumber(l.lon)
+    if (!l || order === null || !missionId || !name || lat === null || lon === null) return []
+    return [
+      {
+        order,
+        missionId,
+        name,
+        lat,
+        lon,
+        distanceMeters: asNumber(l.distance_meters) ?? 0,
+        mode: l.mode === 'ride' ? ('ride' as const) : ('walk' as const),
+        walkMinutes: asNumber(l.walk_minutes) ?? 0,
+        rideMinutes: asNumber(l.ride_minutes),
+        rideFare: asFare(l.ride_fare_twd),
+      },
+    ]
+  })
+  /* 全部都完成了就沒有行程可排，讓模型用文字恭喜他 */
+  if (legs.length === 0) return null
+
+  return {
+    kind: 'itinerary',
+    campaign,
+    endsAt: asString(o.ends_at),
+    completed: asNumber(o.completed) ?? 0,
+    remaining: asNumber(o.remaining) ?? legs.length,
+    legs,
+    totalWalkMinutes: asNumber(o.total_walk_minutes) ?? 0,
+    basis,
+    rideBasis: asString(o.ride_basis),
+  }
+}
+
+function toMissionProgressCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.error || o.active !== true || !Array.isArray(o.stops)) return null
+
+  const campaign = asString(o.campaign)
+  const total = asNumber(o.total)
+  const completed = asNumber(o.completed)
+  if (!campaign || total === null || completed === null || total === 0) return null
+
+  const stops = o.stops.flatMap((raw) => {
+    const s = asRecord(raw)
+    const name = s && asString(s.name)
+    return name ? [{ name, completed: s.completed === true }] : []
+  })
+
+  const n = asRecord(o.next)
+  const missionId = n && asString(n.mission_id)
+  const name = n && asString(n.name)
+  const lat = n && asNumber(n.lat)
+  const lon = n && asNumber(n.lon)
+  const next =
+    n && missionId && name && lat !== null && lon !== null
+      ? { missionId, name, lat, lon, distanceMeters: asNumber(n.distance_meters) ?? 0 }
+      : null
+
+  return {
+    kind: 'mission_progress',
+    campaign,
+    endsAt: asString(o.ends_at),
+    total,
+    completed,
+    stops,
+    next,
+  }
+}
+
+function toInterestChangeCard(output: unknown): AgentCard | null {
+  const o = asRecord(output)
+  if (!o || o.pending_confirmation !== true) return null
+  const ids = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  const add = ids(o.add)
+  const remove = ids(o.remove)
+  if (add.length === 0 && remove.length === 0) return null
+  return { kind: 'interest_change', add, remove }
+}
+
+function toResultCard(toolName: string, output: unknown): AgentCard | null {
+  if (toolName === 'save_trip') {
+    const trip = toPlannedTripEvent(output)
+    if (!trip) return null
+    return {
+      kind: 'result',
+      subject: 'trip',
+      title: '已加入今天行程',
+      detail: `${trip.from} → ${trip.to}・約 ${trip.totalMinutes} 分鐘`,
+    }
+  }
+  if (toolName === 'save_commute_route') {
+    const route = toCommuteRouteEvent(output)
+    if (!route) return null
+    return {
+      kind: 'result',
+      subject: 'commute_route',
+      title: route.label === 'home' ? '已儲存回家路線' : '已儲存上班路線',
+      detail: `${route.origin} → ${route.destination}${route.line ? `・${route.line}` : ''}`,
+    }
+  }
+  return null
+}
+
 /**
  * 工具名稱 → 卡片。不在這張表裡的工具就只有文字回覆。
  *
@@ -629,7 +971,7 @@ function toTransitStatusCard(output: unknown): AgentCard | null {
  * 那趟行程的兩個面向來自同一次工具呼叫，硬拆成兩次呼叫只會多一輪延遲，
  * 而且模型未必真的會去呼叫第二次（實測它會忘記帶地點）。
  */
-function toCards(toolName: string, output: unknown): AgentCard[] {
+export function toCards(toolName: string, output: unknown): AgentCard[] {
   /*
    * 缺位置的優先權高於工具本身：不論是天氣、路線還是找任務缺了位置，
    * 使用者要做的事情都一樣（開定位或手動選），所以給同一張卡。
@@ -665,6 +1007,25 @@ function toCards(toolName: string, output: unknown): AgentCard[] {
     const failure = asString(o?.error)
     if (failure) return [{ kind: 'notice', message: failure }]
     return only(toRideEstimateCard(output))
+  }
+  if (toolName === 'search_places' || toolName === 'compare_trip_options') {
+    const failure = asString(o?.error)
+    if (failure) return [{ kind: 'notice', message: failure }]
+    return only(
+      toolName === 'search_places' ? toPlacesCard(output) : toTripOptionsCard(output),
+    )
+  }
+  if (toolName === 'plan_itinerary' || toolName === 'get_mission_progress') {
+    /* active: false（附近沒有活動）是常態不是錯誤，沒有卡片，讓模型用文字講 */
+    const failure = asString(o?.error)
+    if (failure) return [{ kind: 'notice', message: failure }]
+    return only(
+      toolName === 'plan_itinerary' ? toItineraryCard(output) : toMissionProgressCard(output),
+    )
+  }
+  if (toolName === 'suggest_interests') return only(toInterestChangeCard(output))
+  if (toolName === 'save_trip' || toolName === 'save_commute_route') {
+    return only(toResultCard(toolName, output))
   }
   return []
 }

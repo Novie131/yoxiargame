@@ -84,8 +84,8 @@ function syncToServer(interests: string[]) {
   })
 }
 
-export function toggleInterest(id: string) {
-  selected = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]
+function save(next: string[]) {
+  selected = next
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(selected))
   } catch {
@@ -93,6 +93,20 @@ export function toggleInterest(id: string) {
   }
   emit()
   syncToServer(selected)
+}
+
+export function toggleInterest(id: string) {
+  save(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id])
+}
+
+/*
+ * 一次加入與移除好幾個。給對話裡的興趣確認卡用 ——
+ * 後端只提出建議，使用者按確認才走到這裡。不認得的 id 直接略過。
+ */
+export function applyInterestChange(add: string[], remove: string[]) {
+  const drop = new Set(remove)
+  const kept = selected.filter((id) => !drop.has(id))
+  save([...kept, ...add.filter((id) => VALID.has(id) && !kept.includes(id))])
 }
 
 /* 這台裝置的興趣有沒有送上去過。只在本次工作階段記著，重開會再送一次。 */
