@@ -1016,7 +1016,10 @@ export function toCards(toolName: string, output: unknown): AgentCard[] {
     )
   }
   if (toolName === 'plan_itinerary' || toolName === 'get_mission_progress') {
-    /* active: false（附近沒有活動）是常態不是錯誤，沒有卡片，讓模型用文字講 */
+    /*
+     * active: false（附近沒有活動）是常態不是錯誤；unavailable（沒接資料庫）是部署
+     * 設定的事，使用者處理不了。兩者都沒有卡片，讓模型用文字講。
+     */
     const failure = asString(o?.error)
     if (failure) return [{ kind: 'notice', message: failure }]
     return only(

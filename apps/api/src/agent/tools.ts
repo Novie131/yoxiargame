@@ -206,7 +206,19 @@ export function createTools(userRef: string, location?: UserLocation | null) {
    * 換成別的地名排出來的第一段距離就是錯的。
    */
   const communityDay = async () => {
-    if (!hasDatabase()) return { failure: { error: '活動資料庫未設定' } } as const
+    /*
+     * 沒接資料庫是部署設定的事，不是使用者能處理的錯誤 —— 不回 error（error 會變成
+     * 提示卡，把「資料庫未設定」直接秀給使用者），只讓模型用一句話帶過。
+     * 也不能說成「附近沒有活動」：沒查過，不知道有沒有。
+     */
+    if (!hasDatabase()) {
+      return {
+        failure: {
+          unavailable: true,
+          note: '活動功能目前暫時無法使用。用一句話照實告訴使用者，不要提資料庫或設定，不要說附近沒有活動，也不要推薦別的活動代替',
+        },
+      } as const
+    }
     const origin = await here()
     if (!origin) return { failure: needLocation('找你附近進行中的活動') } as const
 
@@ -650,7 +662,8 @@ export function createTools(userRef: string, location?: UserLocation | null) {
        * 沒有實際整合，所以沒有任何任務掛那些標籤，也不該讓模型假裝有。
        */
       execute: async ({ area, interests }) => {
-        if (!hasDatabase()) return { area: area ?? null, error: '任務資料庫未設定' }
+        /* 這個 error 不會出卡，但模型會照念 —— 別讓它說出「資料庫未設定」 */
+        if (!hasDatabase()) return { area: area ?? null, error: '任務功能暫時無法使用' }
 
         try {
           const resolved = await resolve(area)
