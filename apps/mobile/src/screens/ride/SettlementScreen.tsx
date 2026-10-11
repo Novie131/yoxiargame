@@ -242,27 +242,37 @@ export function SettlementScreen() {
    * 就退一步讀還在進行中的那趟，兩種接法都不會掉到示範值。
    */
   const ride = completed ?? active;
-  const endAt = completed?.completedAt ?? openedAt;
 
   const real = ride && usable(ride.estimate) ? ride : null;
+  /*
+   * 上車時間用叫車那一刻，不用「完成時間 − 車程」倒推：示範行程是加速播放的
+   * （lib/ride 的 DEMO_SPEEDUP），倒推會推到叫車之前 —— 救援情境裡甚至早於誤點推播。
+   */
+  const startAt = real ? real.bookedAt : openedAt;
   const trip: Trip = real
     ? {
         pickup: real.pickup.label,
         dropoff: real.dropoff.label,
         distanceKm: real.estimate.distanceKm,
         durationMinutes: real.estimate.durationMinutes,
-        start: hhmm(endAt - real.estimate.durationMinutes * 60_000),
+        start: hhmm(startAt),
         fare: real.estimate.fare,
         night: real.estimate.nightSurcharge,
         basis: real.estimate.basis,
       }
     : DEMO_TRIP;
   /* 上車那一刻的日期；示範值沒有日期，用今天 */
-  const startDate = ymd(
-    real ? endAt - real.estimate.durationMinutes * 60_000 : openedAt,
-  );
+  const startDate = ymd(startAt);
 
   const rescue = params.get("rescue") === "1" || ride?.rescue === true;
+  /*
+   * 救援版橫幅的分鐘數是使用者在救援彈窗按下去時看到的那個數字（lib/ride 隨行程存著），
+   * 不是寫死的。沒有（?rescue=1 直接開）或叫車其實沒比較快時，就不講數字。
+   */
+  const rescueSaved =
+    ride?.rescueSavedMinutes != null && ride.rescueSavedMinutes > 0
+      ? ride.rescueSavedMinutes
+      : null;
   const bill = breakdown(trip.fare, trip.night);
 
   const done = () => {
@@ -287,12 +297,14 @@ export function SettlementScreen() {
           {rescue && (
             <section className="rounded-card border border-success/30 bg-success-tint px-4 py-3">
               <p className="text-[16px] font-bold text-success">
-                <span aria-hidden="true">⏱ </span>比{RESCUE_SCENARIO.operator}
-                延誤提早 {RESCUE_SCENARIO.savedMinutes} 分鐘抵達！
+                <span aria-hidden="true">⏱ </span>
+                {rescueSaved !== null
+                  ? `比${RESCUE_SCENARIO.operator}延誤提早 ${rescueSaved} 分鐘抵達！`
+                  : "延誤救援行程已完成"}
               </p>
               <p className="mt-1 text-[12px] text-muted">
                 {RESCUE_SCENARIO.train} 車次誤點 {RESCUE_SCENARIO.delayMinutes}{" "}
-                分鐘，yoxi 幫您準時到達
+                分鐘，yoxi 送您抵達目的地
               </p>
             </section>
           )}

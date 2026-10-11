@@ -61,6 +61,11 @@ export type ActiveRide = {
    * 選填：存在 sessionStorage 裡的舊資料沒有這個欄位，讀到 undefined 就是一般行程。
    */
   rescue?: boolean
+  /**
+   * 救援彈窗按下去那一刻算出的「比等誤點的車早到幾分鐘」。結算頁照這個數字講，
+   * 才會跟使用者在彈窗看到的一樣。null = 當時估價還沒回來；≤ 0 = 叫車也沒有比較快。
+   */
+  rescueSavedMinutes?: number | null
 }
 
 /*
@@ -134,33 +139,44 @@ function subscribe(listener: () => void) {
 const RESCUE_KEY = 'yoxi.ride.rescuePending'
 const RESCUE_TTL_MS = 30 * 60 * 1000
 
-/** 標記「接下來叫的這一趟是延誤救援」。救援彈窗的主按鈕呼叫。 */
-export function markNextRideAsRescue() {
+/** 標記「接下來叫的這一趟是延誤救援」。救援彈窗的主按鈕呼叫，帶著當下算出的節省分鐘數。 */
+export function markNextRideAsRescue(savedMinutes: number | null) {
   try {
-    sessionStorage.setItem(RESCUE_KEY, String(Date.now()))
+    sessionStorage.setItem(RESCUE_KEY, JSON.stringify({ at: Date.now(), savedMinutes }))
   } catch {
     /* 存不進去頂多結算頁顯示一般版，不值得擋住叫車 */
   }
 }
 
-/** 收下救援標記（只能收一次），回傳這一趟是不是救援 */
-function takeRescueMark(): boolean {
+/** 收下救援標記（只能收一次）。不是救援就回 null */
+function takeRescueMark(): { savedMinutes: number | null } | null {
   try {
-    const at = Number(sessionStorage.getItem(RESCUE_KEY))
+    const raw = sessionStorage.getItem(RESCUE_KEY)
     sessionStorage.removeItem(RESCUE_KEY)
-    return Number.isFinite(at) && at > 0 && Date.now() - at < RESCUE_TTL_MS
+    if (!raw) return null
+    /* 舊版只存時間戳記（純數字），JSON.parse 會得到數字 */
+    const mark = JSON.parse(raw) as unknown
+    const at = typeof mark === 'number' ? mark : Number((mark as { at?: unknown })?.at)
+    if (!Number.isFinite(at) || at <= 0 || Date.now() - at >= RESCUE_TTL_MS) return null
+    /* 要檢查型別再收：Number(null) 是 0，「估價還沒回來」會被當成「節省 0 分鐘」 */
+    const saved = typeof mark === 'object' ? (mark as { savedMinutes?: unknown })?.savedMinutes : null
+    return { savedMinutes: typeof saved === 'number' && Number.isFinite(saved) ? saved : null }
   } catch {
-    return false
+    return null
   }
 }
 
 /** 確認叫車。回傳建立好的那一趟。 */
-export function startRide(input: Omit<ActiveRide, 'driver' | 'bookedAt' | 'rescue'>): ActiveRide {
+export function startRide(
+  input: Omit<ActiveRide, 'driver' | 'bookedAt' | 'rescue' | 'rescueSavedMinutes'>,
+): ActiveRide {
+  const mark = takeRescueMark()
   const ride: ActiveRide = {
     ...input,
     driver: DEMO_DRIVER,
     bookedAt: Date.now(),
-    rescue: takeRescueMark(),
+    rescue: mark !== null,
+    rescueSavedMinutes: mark?.savedMinutes ?? null,
   }
   patch(ride)
   return ride

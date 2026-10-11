@@ -8,22 +8,17 @@ import { Modal } from "@/components/Modal";
 import { SituationBanner } from "@/components/SituationBanner";
 import { TransportCard } from "@/components/TransportCard";
 import { ClockIcon } from "@/components/icons";
-import { useCommuteRoute } from "@/lib/commute";
-import { RESCUE_SCENARIO, rescueRideUrl, rescueRoute } from "@/lib/delayRescue";
+import { greeting } from "@/lib/datetime";
+import { RESCUE_SCENARIO, rescueRideUrl, useRescuePlan } from "@/lib/delayRescue";
 import { FALLBACK_LABEL, useUserLocation } from "@/lib/location";
-import {
-  formatFare,
-  markNextRideAsRescue,
-  useResolvedPlace,
-  useRideEstimate,
-  type RidePlace,
-} from "@/lib/ride";
+import { formatFare, markNextRideAsRescue, type RidePlace } from "@/lib/ride";
 
 /*
  * 對應設計稿 frame：delay-rescue-modal
  *
  * 跟雨天、紫外線兩頁一樣是**腳本化的情境還原**：底下的首頁與對話照劇本寫死，
- * 台鐵誤點的班次與時間來自 lib/delayRescue（目前沒有台鐵即時資料，見那邊的說明）。
+ * 台鐵誤點的班次來自 lib/delayRescue（目前沒有台鐵即時資料，見那邊的說明）。
+ * 時間跟著現在走：沿用鎖定畫面打開的那一刻當起點，問候語也照現在的時段。
  *
  * 但兩件事是真的：
  *   車資      跟估價頁同一組 hook 與快取，所以按下去之後看到的是同一個數字
@@ -112,13 +107,8 @@ function CarGlyph() {
 export function DelayRescueScreen() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(true);
-  const { route } = useCommuteRoute();
-  const trip = rescueRoute(route);
 
-  /*
-   * 起訖的解析方式與估價頁一模一樣（含「查不到上車點就用目前位置」的退路），
-   * 座標相同，useRideEstimate 就會命中同一份快取 —— 彈窗與估價頁的車資才會一致。
-   */
+  /* 查不到上車點時退到目前位置，跟估價頁一樣（鎖定畫面不給這個，見 useRescuePlan） */
   const location = useUserLocation();
   const here: RidePlace = {
     label:
@@ -127,24 +117,24 @@ export function DelayRescueScreen() {
     lat: location.lat,
     lon: location.lon,
   };
-  const pickupState = useResolvedPlace(trip.from, null, null, here);
-  const dropoffState = useResolvedPlace(trip.to, null, null);
-  const pickup = pickupState.status === "ready" ? pickupState.place : null;
-  const dropoff = dropoffState.status === "ready" ? dropoffState.place : null;
-  const estimate = useRideEstimate(pickup, dropoff);
+  const { trip, clock, pickupState, dropoffState, estimate, savedMinutes } =
+    useRescuePlan({ here });
 
+  /* 把按下當時的節省分鐘數一起存起來，結算頁講的才是使用者看到的那個數字 */
   const rescue = () => {
-    markNextRideAsRescue();
+    markNextRideAsRescue(savedMinutes);
     navigate(rescueRideUrl(trip));
   };
 
-  const {
-    train,
-    delayMinutes,
-    scheduledArrival,
-    delayedArrival,
-    savedMinutes,
-  } = RESCUE_SCENARIO;
+  const { train, delayMinutes } = RESCUE_SCENARIO;
+  /* null = 估價還沒回來；≤ 0 = 叫車也不會比較快，照實說，不寫「節省」 */
+  const faster = savedMinutes !== null && savedMinutes > 0;
+  const savedText =
+    savedMinutes === null
+      ? "估算中"
+      : faster
+        ? `節省 ${savedMinutes} 分鐘`
+        : "無法提早";
 
   return (
     <div
@@ -152,7 +142,7 @@ export function DelayRescueScreen() {
       style={{ background: "var(--color-page-warm)" }}
     >
       <HomeHeader
-        greeting="早安，小婷"
+        greeting={`${greeting()}，小婷`}
         location="新北市板橋區 24°C"
         /*
          * 右上的提示卡只有天氣圖示可選（太陽／雨），配在「誤點」旁邊很怪。
@@ -162,18 +152,22 @@ export function DelayRescueScreen() {
       />
 
       <SituationBanner tone="warm" icon="⏱">
-        {train} 目前誤點約 {delayMinutes} 分鐘，預計 {delayedArrival}{" "}
+        {train} 目前誤點約 {delayMinutes} 分鐘，預計 {clock.delayedArrival}{" "}
         才會抵達公司。
       </SituationBanner>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        <AssistantMessage card time={`${RESCUE_SCENARIO.lockscreenTime} AM`}>
+        <AssistantMessage card time={clock.notifiedAt}>
           小婷，您今天搭的 {train} 誤點了 {delayMinutes}{" "}
-          分鐘，照這樣會比平常晚到公司。 改搭 yoxi 叫車，預計可以早{" "}
-          {savedMinutes} 分鐘抵達。
+          分鐘，照這樣會比平常晚到公司。
+          {savedMinutes === null
+            ? "我正在估改搭 yoxi 叫車可以早多少。"
+            : faster
+              ? `改搭 yoxi 叫車，預計可以早 ${savedMinutes} 分鐘抵達。`
+              : "不過現在路況，改搭叫車也不會比較快，建議先跟公司說一聲。"}
           <TransportCard
             chip="⏱ 延誤救援"
-            badge="省時救援"
+            badge={faster ? "省時救援" : "叫車方案"}
             badgeIcon={<span aria-hidden="true">⚡</span>}
             title={`${trip.from} → ${trip.to}`}
             cta="查看救援方案"
@@ -182,7 +176,7 @@ export function DelayRescueScreen() {
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-muted">
               <span className="flex items-center gap-1 whitespace-nowrap">
                 <ClockIcon />
-                節省 {savedMinutes} 分鐘
+                {savedText}
               </span>
               <span className="whitespace-nowrap">
                 車資於下一頁依實際距離估算
@@ -226,11 +220,11 @@ export function DelayRescueScreen() {
             <span className="flex items-baseline gap-2">
               <span className="sr-only">原本</span>
               <span className="text-[14px] text-subtle line-through">
-                {scheduledArrival}
+                {clock.scheduledArrival}
               </span>
               <span className="sr-only">，誤點後</span>
               <span className="text-[19px] font-bold text-primary">
-                {delayedArrival}
+                {clock.delayedArrival}
               </span>
             </span>
           </div>
@@ -251,8 +245,10 @@ export function DelayRescueScreen() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <p className="text-[16px] font-bold">yoxi 即時叫車</p>
-              <span className="shrink-0 rounded-md bg-success-tint px-2 py-0.5 text-[12px] font-bold text-success">
-                節省 {savedMinutes} 分鐘
+              <span
+                className={`shrink-0 rounded-md px-2 py-0.5 text-[12px] font-bold ${faster ? "bg-success-tint text-success" : "bg-surface-2 text-muted"}`}
+              >
+                {savedText}
               </span>
             </div>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[14px] text-muted">

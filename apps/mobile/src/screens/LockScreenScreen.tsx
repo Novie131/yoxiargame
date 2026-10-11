@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router";
 
-import { useCommuteRoute } from "@/lib/commute";
-import { RESCUE_SCENARIO, rescueRoute } from "@/lib/delayRescue";
+import { RESCUE_SCENARIO, useRescuePlan } from "@/lib/delayRescue";
 
 /*
  * 對應設計稿 frame：iphone-lockscreen-notification
@@ -12,15 +11,15 @@ import { RESCUE_SCENARIO, rescueRoute } from "@/lib/delayRescue";
  * 讓 demo 能從「使用者還沒打開 App」這個時間點開始講。
  * 真正上架後，這一步由 Capacitor 的推播接手，點通知一樣是開 /rescue。
  *
- * 時間是劇本的（lib/delayRescue），日期用今天：
- * 時間要早於「原本 08:45 抵達」故事才說得通，日期寫死反而會讓人以為是舊截圖。
+ * 時間與日期都是現在：打開這頁就是推播剛跳出來的那一刻，
+ * 誤點後幾點到、叫車能省幾分鐘都從這一刻往後算（lib/delayRescue 的 useRescuePlan）。
  *
  * 這一頁掛在 AppShell 外面（見 App.tsx）：鎖定畫面沒有 App 的狀態列與 tab bar，
  * 留著的話一眼就穿幫。
  *
- * 通知內文照設計稿，但**不放車資與車程**：鎖定畫面沒有估價（要估就得先定位，
- * 在一張假的鎖定畫面上跳定位權限很怪），寫死設計稿的 NT$185 又會跟下一頁的
- * 即時估價對不上。車資留到 /rescue 的彈窗再講。
+ * 通知內文照設計稿，但**不放車資與車程**，車資留到 /rescue 的彈窗再講。
+ * 「節省幾分鐘」要用到車程，所以這頁也會估價，但只用站名查起訖、不拿定位 ——
+ * 在一張假的鎖定畫面上跳定位權限很怪。估價還沒回來時不講數字。
  */
 
 /* 桌布：雨夜窗外的城市光斑。設計稿是照片，這裡用既有色票疊出光斑，不另外引入圖片與色碼 */
@@ -117,11 +116,9 @@ function todayLabel(): string {
 
 export function LockScreenScreen() {
   const navigate = useNavigate();
-  const { lockscreenTime, savedMinutes, train, delayMinutes, delayedArrival } =
-    RESCUE_SCENARIO;
-  /* 起訖跟 /rescue 的彈窗同一個來源：有通勤路線用他自己的，沒有用示範路線 */
-  const { route } = useCommuteRoute();
-  const trip = rescueRoute(route);
+  const { train, delayMinutes } = RESCUE_SCENARIO;
+  /* 鎖定畫面是故事的開頭：每次打開都從現在重新起算，/rescue 沿用這個起點 */
+  const { trip, clock, savedMinutes } = useRescuePlan({ restart: true });
 
   return (
     <div className="h-full bg-surface-2">
@@ -135,7 +132,7 @@ export function LockScreenScreen() {
           <p className="text-[19px] font-semibold opacity-95">{todayLabel()}</p>
           {/* 鎖定畫面的大時間。字重壓細，跟 iOS 的樣子比較像 */}
           <p className="mt-1 text-[92px] font-extralight leading-none tracking-tight [@media(max-height:640px)]:text-[72px]">
-            {lockscreenTime}
+            {clock.notifiedAt}
           </p>
         </div>
 
@@ -171,12 +168,17 @@ export function LockScreenScreen() {
             </span>
             <span className="mt-1 block text-[14px] leading-relaxed text-white/90">
               您的常用路線「{trip.from}→{trip.to}」受影響，預計延誤至{" "}
-              {delayedArrival} 抵達。改搭 yoxi 即時叫車可提早抵達。
+              {clock.delayedArrival} 抵達。
+              {savedMinutes !== null && savedMinutes <= 0
+                ? "目前路況改搭叫車也不會比較快，點開看看其他安排。"
+                : "改搭 yoxi 即時叫車可提早抵達。"}
             </span>
-            <span className="mt-2.5 inline-flex items-center gap-1 rounded-lg border border-success/50 bg-success/35 px-2.5 py-1 text-[12px] font-bold text-success-tint">
-              <span aria-hidden="true">⚡</span>
-              yoxi 叫車救援可節省 {savedMinutes} 分鐘抵達
-            </span>
+            {savedMinutes !== null && savedMinutes > 0 && (
+              <span className="mt-2.5 inline-flex items-center gap-1 rounded-lg border border-success/50 bg-success/35 px-2.5 py-1 text-[12px] font-bold text-success-tint">
+                <span aria-hidden="true">⚡</span>
+                yoxi 叫車救援可節省 {savedMinutes} 分鐘抵達
+              </span>
+            )}
           </button>
         </div>
 
