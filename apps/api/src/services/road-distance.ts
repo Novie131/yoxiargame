@@ -15,6 +15,13 @@
 
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving'
 
+/*
+ * 一定要帶 User-Agent：OSRM 公開伺服器對沒帶的請求一律回 403。
+ * Node 的 fetch 會自己帶（本機一切正常），Cloudflare Workers 不會 ——
+ * 漏了這個，正式站每一次都默默退回直線估算。字串跟 weather.ts、nearby-places.ts 同一個。
+ */
+const USER_AGENT = 'yoxi-argame/0.1 (https://yoxiargame.pages.dev)'
+
 /* 估價頁在等這個數字。比前端畫線的三秒短一點，退回估算總比讓人乾等好 */
 const TIMEOUT_MS = 2_500
 
@@ -54,9 +61,14 @@ export async function roadDistanceMeters(
      * 兩邊送一樣的東西，OSRM 才會回同一條路。
      */
     const res = await fetch(`${OSRM_BASE}/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`, {
+      headers: { 'User-Agent': USER_AGENT },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      /* 非 2xx 也記一筆：之前 403 什麼都沒記，正式站壞了也看不出來 */
+      console.warn('[road-distance] HTTP', res.status)
+      return null
+    }
     const body = (await res.json()) as { code?: string; routes?: Array<{ distance?: unknown }> }
     const meters = body.code === 'Ok' ? Number(body.routes?.[0]?.distance) : NaN
     if (!Number.isFinite(meters) || meters <= 0) return null
