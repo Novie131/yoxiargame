@@ -34,7 +34,7 @@ const PLACES: Array<{ name: string; tags: string[] }> = [
   { name: '大安森林公園', tags: ['sport', 'photo'] },
   { name: '臺北市信義區象山親山步道', tags: ['sport', 'photo', 'travel'] },
   { name: '四四南村', tags: ['coffee', 'photo', 'food'] },
-  { name: '國立臺灣科學教育館', tags: ['tech', 'reading'] },
+  { name: '松山文創園區', tags: ['tech', 'reading', 'photo'] },
   { name: '華山1914文化創意產業園區', tags: ['photo', 'movie', 'coffee'] },
 ]
 
