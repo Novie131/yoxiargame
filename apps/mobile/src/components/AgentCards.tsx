@@ -18,6 +18,7 @@ import type {
   TransitStatusCard,
   TripOptionSummary,
   TripOptionsCard,
+  WalkRouteCard,
   WeatherCard,
 } from '@/lib/agent'
 import { minutesLeft } from '@/lib/communityDay'
@@ -28,6 +29,7 @@ import { lookupPlace, requestLocation, setManualLocation, useUserLocation } from
 import { formatFare, trafficLabel } from '@/lib/ride'
 import { describeTripOption, useTripOptions } from '@/lib/tripOptions'
 import { addTrip, useTrips } from '@/lib/trips'
+import { WALK_ROUTE } from '@/lib/walkRoute'
 
 /*
  * 對話裡的動作卡片。
@@ -1024,6 +1026,37 @@ function Result({ card }: { card: ResultCard }) {
 }
 
 /*
+ * 散步路線（Figma 05A 的 02A：附近散步卡 → 05C 路線詳情）。
+ * 只有一條示範路線，不認得的 id 就不畫，不要畫一張點進去是別條的卡。
+ */
+function WalkRoute({ card }: { card: WalkRouteCard }) {
+  const navigate = useNavigate()
+  if (card.routeId !== WALK_ROUTE.id) return null
+
+  return (
+    <Shell>
+      <div className="flex items-center justify-between gap-2">
+        <span className="rounded-full border border-primary px-2 py-0.5 text-[11px] font-bold text-primary">
+          附近散步
+        </span>
+        <span className="text-[12px] font-bold text-primary">輕鬆慢走</span>
+      </div>
+      <h3 className="mt-2 text-[15px] font-bold">{WALK_ROUTE.title}（示範路線）</h3>
+      <p className="mt-1 flex flex-wrap gap-x-3 text-[12px] text-muted">
+        <span className="flex items-center gap-1">
+          <ClockIcon />約 {WALK_ROUTE.minutes} 分鐘
+        </span>
+        <span className="flex items-center gap-1">
+          <MapPinIcon />約 {WALK_ROUTE.distanceKm} 公里・{WALK_ROUTE.spots} 個景點
+        </span>
+      </p>
+      <p className="mt-1 text-[12px] text-subtle">起點：{WALK_ROUTE.start.label}</p>
+      <PrimaryAction onClick={() => navigate(WALK_ROUTE.path)}>查看散步路線</PrimaryAction>
+    </Shell>
+  )
+}
+
+/*
  * 叫車估價。
  *
  * 版面的重點順序刻意是「車資 → 依據 → 動作」：
@@ -1170,5 +1203,6 @@ export function AgentCardView({
   if (card.kind === 'mission_progress') return <MissionProgress card={card} />
   if (card.kind === 'interest_change') return <InterestChange card={card} />
   if (card.kind === 'result') return <Result card={card} />
+  if (card.kind === 'walk_route') return <WalkRoute card={card} />
   return <TransitStatus card={card} />
 }

@@ -7,6 +7,7 @@ import { missionOfLeg, useCommunityDay } from '@/lib/communityDay'
 import { CATEGORIES, PLACES, THEME, usePlan, type Category } from '@/lib/explorePlan'
 import { useUserLocation } from '@/lib/location'
 import { useNearbyMissions } from '@/lib/missions'
+import { WALK_ROUTE } from '@/lib/walkRoute'
 import {
   CheckIcon,
   HeroPlaceholder,
@@ -177,6 +178,42 @@ export function ExploreScreen() {
               查看行程
             </button>
           </article>
+        </section>
+
+        {/*
+          * ── 今日旅行推薦 ──（Figma 05A 的 02B exploration-home）
+          * 探索頁整頁仍是 536:1672 的情境版，只把 02B 的主卡搬進來，當作 05C 路線詳情的入口。
+          * 設計稿右上的「換一條」拿掉了：目前只有這一條路線，換了也是同一條。
+          */}
+        <section className="mt-5" aria-labelledby="walk-title">
+          <h2 id="walk-title" className="text-[18px] font-bold">
+            今日旅行推薦
+          </h2>
+          <Link
+            to={WALK_ROUTE.path}
+            className="relative mt-2.5 block h-[172px] overflow-hidden rounded-2xl bg-surface-3"
+          >
+            <img
+              src={WALK_ROUTE.image}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+            <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+            <span className="absolute left-3 top-3 rounded-md bg-primary px-2 py-0.5 text-[12px] font-bold text-white">
+              {WALK_ROUTE.badge}
+            </span>
+            <span className="absolute inset-x-3 bottom-3 text-white">
+              <span className="block text-[18px] font-bold leading-snug">{WALK_ROUTE.title}</span>
+              <span className="mt-1.5 flex items-center justify-between gap-2">
+                <span className="text-[13px]">
+                  {WALK_ROUTE.distanceKm} 公里・{WALK_ROUTE.minutes} 分鐘・{WALK_ROUTE.spots} 個景點
+                </span>
+                <span className="shrink-0 rounded-full bg-surface px-3 py-1.5 text-[13px] font-bold text-ink">
+                  開始探索
+                </span>
+              </span>
+            </span>
+          </Link>
         </section>
 
         {/* ── 附近靈感 ── */}

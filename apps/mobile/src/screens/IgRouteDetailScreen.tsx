@@ -4,12 +4,13 @@ import { useLocation, useNavigate } from 'react-router'
 import { ChevronLeftIcon } from '@/components/icons'
 import { FALLBACK_LABEL, useUserLocation } from '@/lib/location'
 import { formatFare, useRideEstimate } from '@/lib/ride'
+import { WALK_ROUTE } from '@/lib/walkRoute'
 
 /*
  * 對應設計稿 frame：IG 路線詳情（Figma 475:88）
  *
  * 探索頁裡一則 IG 風格的散步路線貼文。tab bar 的「探索」亮著，所以它屬於探索分頁；
- * 探索頁本身目前還沒有連到這裡的卡片，入口暫時放在 /dev。
+ * 入口是探索頁的「今日旅行推薦」與 Agent 的散步路線卡（路線資料在 lib/walkRoute）。
  *
  * 貼文內容（照片、標題、hashtag、1.8 公里 / 45 分鐘 / 5 個景點、按讚數）是**示範貼文**，
  * 照設計稿寫死；底下的「從我的位置出發」與 yoxi 車程／車資則是真的：
@@ -22,27 +23,8 @@ import { formatFare, useRideEstimate } from '@/lib/ride'
  *   左上多一顆返回鈕：設計稿沒有，但這頁是從別處點進來的，沒有它只能靠 tab bar 回去
  */
 
-const POST = {
-  image: '/images/ig-wenzhou-street.jpg',
-  title: '溫州街日式老屋與獨立書香漫步',
-  tags: ['老屋散策', '獨立書店', '日式建築', '台大周邊'],
-  body:
-    '漫步溫州街巷弄，探索日治時期留下的老屋群落。從台大校門出發，沿途經過獨立書店、老樹咖啡館，' +
-    '感受台北最有文青氣息的街區。每一棟老屋都有自己的故事，每一間書店都是一個小宇宙。' +
-    '巷弄狹窄、住戶多，散步時請放輕音量並留意來車。',
-  likes: 1284,
-  distanceKm: 1.8,
-  minutes: 45,
-  spots: 5,
-} as const
-
-/* 路線起點。座標取台大正門（羅斯福路與新生南路口） */
-const START = {
-  label: '台灣大學校門口',
-  note: '捷運公館站 3 號出口',
-  lat: 25.0172,
-  lon: 121.5399,
-}
+const POST = WALK_ROUTE
+const START = WALK_ROUTE.start
 
 export function IgRouteDetailScreen() {
   const navigate = useNavigate()

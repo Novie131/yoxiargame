@@ -69,6 +69,8 @@ const SYSTEM = `你是 yoxi 的行動助理，服務對象是台灣使用者。
 - 社群日活動：要排路線用 plan_itinerary，問進度用 get_mission_progress。
   工具回 active 為 false 代表附近沒有活動，照實說就好，不要推薦別的活動代替。
   沒有任何獎勵資料，絕對不要提點數、折價券或獎勵。
+- 使用者想散步、走走、放鬆、逛逛巷弄時用 suggest_walk_route，用一兩句話介紹就好，
+  細節在卡片上。路線長度跟使用者要的不一樣時要照實講。
 - 使用者想調整興趣偏好時呼叫 suggest_interests。它**不會直接存**，
   要請使用者在卡片上按確認，不可以說「已經幫你設定好了」。
 - 存好通勤路線之後，如果使用者還沒講通勤時段，順帶問一次「平常大概幾點出門、幾點回家」。
@@ -413,6 +415,11 @@ export type AgentCard =
    * 工具本身不存 —— 使用者在卡片上按確認，前端才寫進 interests.ts。
    */
   | { kind: 'interest_change'; add: string[]; remove: string[] }
+  /*
+   * 散步路線（suggest_walk_route）。內容在前端 lib/walkRoute.ts，卡片只帶 id ——
+   * 探索頁、詳情頁、這張卡講的才會是同一個公里數。
+   */
+  | { kind: 'walk_route'; routeId: string }
   /*
    * 執行結果（save_trip、save_commute_route 成功時）。
    *
@@ -953,6 +960,11 @@ function toInterestChangeCard(output: unknown): AgentCard | null {
   return { kind: 'interest_change', add, remove }
 }
 
+function toWalkRouteCard(output: unknown): AgentCard | null {
+  const routeId = asString(asRecord(output)?.route_id)
+  return routeId ? { kind: 'walk_route', routeId } : null
+}
+
 function toResultCard(toolName: string, output: unknown): AgentCard | null {
   if (toolName === 'save_trip') {
     const trip = toPlannedTripEvent(output)
@@ -1037,6 +1049,7 @@ export function toCards(toolName: string, output: unknown): AgentCard[] {
     )
   }
   if (toolName === 'suggest_interests') return only(toInterestChangeCard(output))
+  if (toolName === 'suggest_walk_route') return only(toWalkRouteCard(output))
   if (toolName === 'save_trip' || toolName === 'save_commute_route') {
     return only(toResultCard(toolName, output))
   }

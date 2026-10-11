@@ -1096,6 +1096,33 @@ export function createTools(userRef: string, location?: UserLocation | null) {
         }
       },
     }),
+
+    suggest_walk_route: tool({
+      description:
+        '使用者想散步、走走、放鬆一下，或想要一條可以慢慢逛的路線時，推薦精選散步路線。' +
+        '目前只有一條示範路線，畫面會出一張路線卡讓使用者點進詳情。',
+      inputSchema: z.object({
+        minutes: z.number().int().positive().optional().describe('使用者想走多久（分鐘），沒講就不填'),
+      }),
+      /*
+       * 路線內容在前端 lib/walkRoute.ts（探索頁與詳情頁共用），這裡只帶 id 和
+       * 模型講話需要的事實。只有一條路線，所以不管使用者要多久都回同一條 ——
+       * 時間對不上時要照實講，不能把 45 分鐘說成 20 分鐘。
+       */
+      execute: async ({ minutes }) => ({
+        route_id: 'wenzhou',
+        title: '溫州街日式老屋與獨立書香漫步',
+        start: '台灣大學校門口（捷運公館站 3 號出口）',
+        distance_km: 1.8,
+        minutes: 45,
+        spots: 5,
+        demo: true,
+        note:
+          (minutes && minutes < 45
+            ? `使用者想走約 ${minutes} 分鐘，這條全程約 45 分鐘，要照實說可以只走前半段。`
+            : '') + '這是示範路線，景點內容沒有即時資料；不要編造店名、營業時間或天氣。',
+      }),
+    }),
   }
 
   /*

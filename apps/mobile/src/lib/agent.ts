@@ -241,6 +241,12 @@ export type ResultCard = {
   detail: string
 }
 
+/* 散步路線。內容在 lib/walkRoute.ts，卡片只帶 id（後端 suggest_walk_route） */
+export type WalkRouteCard = {
+  kind: 'walk_route'
+  routeId: string
+}
+
 export type AgentCard =
   | RoutePlanCard
   | WeatherCard
@@ -255,6 +261,7 @@ export type AgentCard =
   | MissionProgressCard
   | InterestChangeCard
   | ResultCard
+  | WalkRouteCard
 
 /** 模型把一趟行程加進「今天的行程」。形狀必須跟後端的 PlannedTripEvent 一致。 */
 export type PlannedTripEvent = {
@@ -293,6 +300,7 @@ const CARD_KIND_LIST: Record<AgentCard['kind'], true> = {
   mission_progress: true,
   interest_change: true,
   result: true,
+  walk_route: true,
 }
 const CARD_KINDS = new Set<string>(Object.keys(CARD_KIND_LIST))
 
