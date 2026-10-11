@@ -33,6 +33,12 @@ export type RidePlace = {
 /* 估價的形狀直接用後端的（services/ride.ts）。basis 一定要顯示，理由在那邊的註解。 */
 export type { RideEstimate }
 
+/*
+ * 示範用的優惠券，金額照設計稿（結算頁 -NT$50）。
+ * 估價頁的「已套用優惠券」跟結算頁的折抵要是同一張，所以放在這裡共用。
+ */
+export const DEMO_COUPON = 50
+
 export type Driver = {
   name: string
   car: string

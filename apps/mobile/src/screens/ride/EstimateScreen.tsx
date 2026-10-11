@@ -7,6 +7,7 @@ import { MapBackdrop } from '@/components/MapBackdrop'
 import { CarIcon, ChevronLeftIcon, CrosshairIcon } from '@/components/icons'
 import { FALLBACK_LABEL, requestLocation, useUserLocation } from '@/lib/location'
 import {
+  DEMO_COUPON,
   formatFare,
   startRide,
   trafficLabel,
@@ -185,13 +186,17 @@ export function EstimateScreen() {
       <BottomSheet>
         <div className="flex items-baseline justify-between">
           <h1 className="text-[20px] font-bold">預估車資</h1>
-          {estimate.status === 'ready' && (
-            <span className="text-[12px] font-medium text-subtle">
-              {trafficLabel(estimate.data.traffic)}
-              {estimate.data.nightSurcharge && '・含夜間加成'}
-            </span>
-          )}
+          {/* 設計稿右上角的「已套用優惠券」。折抵在結算時扣，這裡的車資還是原價區間 */}
+          <span className="rounded-md bg-primary-tint px-2 py-0.5 text-[12px] font-bold text-primary">
+            已套用優惠券・結算折 NT${DEMO_COUPON}
+          </span>
         </div>
+        {estimate.status === 'ready' && (
+          <p className="mt-0.5 text-[12px] font-medium text-subtle">
+            {trafficLabel(estimate.data.traffic)}
+            {estimate.data.nightSurcharge && '・含夜間加成'}
+          </p>
+        )}
 
         <div className="relative mt-3 space-y-3 rounded-2xl bg-surface-2 p-3.5">
           <span className="absolute left-[10px] top-7 h-8 w-px bg-line" />

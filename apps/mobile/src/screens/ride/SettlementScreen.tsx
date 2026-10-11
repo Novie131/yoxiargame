@@ -5,6 +5,7 @@ import { ChevronLeftIcon } from "@/components/icons";
 import { RESCUE_SCENARIO } from "@/lib/delayRescue";
 import {
   clearCompletedRide,
+  DEMO_COUPON,
   endRide,
   useActiveRide,
   useCompletedRide,
@@ -41,8 +42,6 @@ import { YOXI_PASSENGER_LINK } from "@/lib/yoxiHandoff";
 const BASE_FARE = 85;
 const NIGHT_SURCHARGE = 20;
 
-/* 示範用的優惠券，金額照設計稿 */
-const DEMO_COUPON = 50;
 /* 示範用的點數回饋：每 NT$2 回饋 1 點（設計稿 NT$240 → +120 點的比例） */
 const DEMO_POINTS_PER_DOLLAR = 0.5;
 

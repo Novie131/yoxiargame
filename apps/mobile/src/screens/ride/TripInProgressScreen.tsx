@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
 import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
+import { Modal } from '@/components/Modal'
 import { AlertIcon, ShieldIcon } from '@/components/icons'
 import { pointAlong } from '@/lib/drivingRoute'
 import { completeRide, formatFare, useActiveRide, useRideProgress } from '@/lib/ride'
@@ -17,6 +18,10 @@ import { useRideMapRoute } from '@/lib/rideMap'
  *
  * 剩餘時間是**模擬**的（見 lib/ride 的 DEMO_SPEEDUP），費用是依公告費率
  * 估算的區間 —— 兩件事畫面上都要講。真正的跳表金額只有車上的計費器知道。
+ *
+ * 安全分享用系統分享表（Web Share）把車牌、司機、目的地傳給親友，不支援的瀏覽器改成複製；
+ * 內容是這趟車的真實資料，只是沒有即時追蹤連結（那要派車系統）。
+ * 緊急求助直接撥 110／119 —— 這兩個號碼不需要接任何系統，demo 也該是真的。
  */
 
 export function TripInProgressScreen() {
@@ -77,6 +82,8 @@ export function TripInProgressScreen() {
    * 沒有這個旗標，下面的保護會先看到「沒有行程」把人導回叫車首頁，結算頁就被蓋掉了。
    */
   const leaving = useRef(false)
+  const [shareNote, setShareNote] = useState<string | null>(null)
+  const [sos, setSos] = useState(false)
 
   useEffect(() => {
     if (!ride && !leaving.current) navigate('/ride/booking', { replace: true })
@@ -85,6 +92,28 @@ export function TripInProgressScreen() {
   if (!ride || !progress) return null
 
   const arrived = progress.phase === 'finished'
+
+  const share = async () => {
+    const { driver } = ride
+    const text = [
+      `我正在搭乘 yoxi 前往 ${ride.dropoff.label}`,
+      `車牌 ${driver.plate}・${driver.car}・${driver.name}司機`,
+      arrived ? '已抵達目的地' : `預計 ${progress.tripMinutes} 分鐘後抵達`,
+    ].join('\n')
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'yoxi 行程分享', text })
+        setShareNote('已開啟分享')
+      } else {
+        await navigator.clipboard.writeText(text)
+        setShareNote('行程資訊已複製，可以貼給親友')
+      }
+    } catch (e) {
+      /* 使用者自己關掉分享表不算錯誤 */
+      if (e instanceof DOMException && e.name === 'AbortError') return
+      setShareNote('無法分享，請截圖傳給親友')
+    }
+  }
 
   const finish = () => {
     leaving.current = true
@@ -159,21 +188,26 @@ export function TripInProgressScreen() {
         <div className="mt-3 grid grid-cols-2 gap-2.5">
           <button
             type="button"
-            disabled
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-primary py-3.5 text-[15px] font-semibold text-primary disabled:opacity-45"
+            onClick={() => void share()}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-primary py-3.5 text-[15px] font-semibold text-primary"
           >
             <ShieldIcon />
             安全分享
           </button>
           <button
             type="button"
-            disabled
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-primary py-3.5 text-[15px] font-semibold text-primary disabled:opacity-45"
+            onClick={() => setSos(true)}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-primary py-3.5 text-[15px] font-semibold text-primary"
           >
             <AlertIcon />
             緊急求助
           </button>
         </div>
+        {shareNote && (
+          <p role="status" className="mt-2 text-center text-[12px] text-muted">
+            {shareNote}
+          </p>
+        )}
 
         <button
           type="button"
@@ -183,6 +217,33 @@ export function TripInProgressScreen() {
           {arrived ? '完成行程' : '結束行程'}
         </button>
       </BottomSheet>
+
+      <Modal open={sos} onClose={() => setSos(false)} title="需要緊急協助？" icon={<AlertIcon />}>
+        <p className="mt-3 text-center text-[14px] leading-[1.6] text-muted">
+          車牌 {ride.driver.plate}・前往 {ride.dropoff.label}
+          <br />
+          撥號前可先記下車牌，告訴對方你的位置。
+        </p>
+        <a
+          href="tel:110"
+          className="mt-4 block w-full rounded-xl bg-primary py-3.5 text-center text-[16px] font-bold text-white"
+        >
+          撥打 110 報案
+        </a>
+        <a
+          href="tel:119"
+          className="mt-2.5 block w-full rounded-xl border border-primary py-3.5 text-center text-[16px] font-bold text-primary"
+        >
+          撥打 119 救護
+        </a>
+        <button
+          type="button"
+          onClick={() => setSos(false)}
+          className="mt-2.5 w-full py-3 text-[15px] text-muted"
+        >
+          我沒事，取消
+        </button>
+      </Modal>
     </div>
   )
 }

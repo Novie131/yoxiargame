@@ -1,9 +1,10 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { BottomSheet } from '@/components/BottomSheet'
 import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
+import { Modal } from '@/components/Modal'
 import {
   ChatIcon,
   CrosshairIcon,
@@ -25,12 +26,23 @@ import { driverStartOf, useRideMapRoute } from '@/lib/rideMap'
  *
  * 倒數跑完會自己進入行程中，那是設計稿的原意；狀態列照樣可以點，
  * 讓 demo 不用等。
+ *
+ * 「傳送訊息」「撥打電話」沒有真的司機可以聯絡，但按鈕不能是灰的 ——
+ * 打開後給出真實 App 會有的選項（快速訊息、隱碼撥號），並寫明這次不會送出。
+ * 取消行程要先確認：司機已經在路上，誤觸一下就沒車了。
  */
+
+/* 設計稿沒有列訊息內容，這三句是叫車 App 最常用的快速回覆 */
+const QUICK_MESSAGES = ['我已在上車點等候', '請稍等，我 2 分鐘後到', '我在路口的便利商店前面']
+
+type Dialog = 'message' | 'call' | 'cancel' | null
 
 export function DriverArrivingScreen() {
   const navigate = useNavigate()
   const ride = useActiveRide()
   const progress = useRideProgress(ride)
+  const [dialog, setDialog] = useState<Dialog>(null)
+  const [sent, setSent] = useState<string | null>(null)
 
   /*
    * 地圖：司機 → 上車點的路線（設計稿 yoxi-driver-arriving）。
@@ -79,6 +91,7 @@ export function DriverArrivingScreen() {
     endRide()
     navigate('/ride/booking', { replace: true })
   }
+  const close = () => setDialog(null)
 
   return (
     <div className="flex h-full flex-col">
@@ -150,19 +163,25 @@ export function DriverArrivingScreen() {
           模擬派車・倒數為示範速度，尚未接上 yoxi 派車系統
         </p>
 
+        {sent && (
+          <p role="status" className="mt-2 rounded-xl bg-surface-2 px-3 py-2 text-[13px]">
+            已傳給司機：「{sent}」<span className="text-subtle">（示範，未實際送出）</span>
+          </p>
+        )}
+
         <div className="mt-3 grid grid-cols-2 gap-2.5">
           <button
             type="button"
-            disabled
-            className="flex items-center justify-center gap-2 rounded-xl border border-line/60 py-3.5 text-[15px] font-medium disabled:opacity-45"
+            onClick={() => setDialog('message')}
+            className="flex items-center justify-center gap-2 rounded-xl border border-line/60 py-3.5 text-[15px] font-medium"
           >
             <ChatIcon />
             傳送訊息
           </button>
           <button
             type="button"
-            disabled
-            className="flex items-center justify-center gap-2 rounded-xl border border-line/60 py-3.5 text-[15px] font-medium disabled:opacity-45"
+            onClick={() => setDialog('call')}
+            className="flex items-center justify-center gap-2 rounded-xl border border-line/60 py-3.5 text-[15px] font-medium"
           >
             <PhoneIcon />
             撥打電話
@@ -172,13 +191,78 @@ export function DriverArrivingScreen() {
         <div className="mt-3 border-t border-black/[.06] pt-3 text-center">
           <button
             type="button"
-            onClick={cancel}
+            onClick={() => setDialog('cancel')}
             className="text-[15px] text-muted underline underline-offset-4"
           >
             取消行程
           </button>
         </div>
       </BottomSheet>
+
+      <Modal open={dialog === 'message'} onClose={close} title={`傳訊息給${driver.name}司機`}>
+        <div className="mt-4 space-y-2">
+          {QUICK_MESSAGES.map((text) => (
+            <button
+              key={text}
+              type="button"
+              onClick={() => {
+                setSent(text)
+                close()
+              }}
+              className="w-full rounded-xl border border-line/60 px-4 py-3 text-left text-[15px]"
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-center text-[12px] text-subtle">示範流程：訊息不會實際送出</p>
+        <DialogButton onClick={close}>取消</DialogButton>
+      </Modal>
+
+      <Modal open={dialog === 'call'} onClose={close} title={`撥打給${driver.name}司機`}>
+        <p className="mt-3 text-center text-[14px] leading-[1.6] text-muted">
+          正式版會透過 yoxi 隱碼電話撥出，雙方都看不到對方的真實號碼。
+          <br />
+          目前是模擬派車，沒有司機可以接聽。
+        </p>
+        <DialogButton onClick={close} primary>
+          知道了
+        </DialogButton>
+      </Modal>
+
+      <Modal open={dialog === 'cancel'} onClose={close} title="確定要取消行程？">
+        <p className="mt-3 text-center text-[14px] leading-[1.6] text-muted">
+          {driver.name}司機已在路上，預計 {progress.driverMinutes} 分鐘後抵達。
+          取消後需要重新叫車。
+        </p>
+        <DialogButton onClick={close} primary>
+          繼續等候
+        </DialogButton>
+        <DialogButton onClick={cancel}>確定取消</DialogButton>
+      </Modal>
     </div>
+  )
+}
+
+function DialogButton({
+  onClick,
+  primary,
+  children,
+}: {
+  onClick: () => void
+  primary?: boolean
+  children: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'mt-3 w-full rounded-xl py-3.5 text-[16px] font-bold',
+        primary ? 'bg-primary text-white' : 'text-muted',
+      ].join(' ')}
+    >
+      {children}
+    </button>
   )
 }
