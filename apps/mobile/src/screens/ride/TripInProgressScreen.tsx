@@ -142,7 +142,11 @@ export function TripInProgressScreen() {
           </span>
         </div>
 
-        <RouteLegend driving={map.driving} />
+        <RouteLegend
+          driving={map.driving}
+          /* 舊版存下來的行程沒有 distanceSource，那就不標公里數 */
+          distanceKm={ride?.estimate.distanceSource === 'road' ? ride.estimate.distanceKm : null}
+        />
       </MapBackdrop>
 
       <BottomSheet>

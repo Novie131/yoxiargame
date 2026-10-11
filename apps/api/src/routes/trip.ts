@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 
-import { estimateRide } from '../services/ride.ts'
+import { estimateRideOnRoad } from '../services/ride.ts'
 import { compareTripOptions } from '../services/trip-options.ts'
 import { parseFromTo, query, type FromTo, type FromToQuery } from './validate.ts'
 
@@ -36,11 +36,12 @@ export const tripRoutes = new Hono().get('/options', fromToQuery, async (c) => {
  * 再繞一次地理編碼只會多一次往返、而且可能解析到別的地方去。
  * 需要從地名查的情境走 agent 的 estimate_ride 工具。
  */
-export const rideRoutes = new Hono().get('/estimate', fromToQuery, (c) => {
+export const rideRoutes = new Hono().get('/estimate', fromToQuery, async (c) => {
   const { fromLat, fromLon, toLat, toLon } = c.req.valid('query')
 
   try {
-    const estimate = estimateRide({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon })
+    /* 道路距離跟叫車地圖上的線同一個來源（OSRM），拿不到時退回直線 × 係數 */
+    const estimate = await estimateRideOnRoad({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon })
     /*
      * 不能久快取：車資與車程跟「現在幾點」有關（尖峰、離峰、夜間加成），
      * 08:00 算出來的估價放到 11:00 就是錯的。抓兩分鐘，跟 /transit/plan 一致。

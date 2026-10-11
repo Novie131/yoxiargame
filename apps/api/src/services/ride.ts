@@ -1,4 +1,5 @@
 import { taipeiNow, withinWindow } from './clock.ts'
+import { roadDistanceMeters } from './road-distance.ts'
 import { haversineMeters } from './tdx.ts'
 
 /*
@@ -42,7 +43,7 @@ const TARIFF = {
 } as const
 
 /*
- * 直線距離 → 實際道路距離的放大係數。
+ * 直線距離 → 實際道路距離的放大係數。拿不到 OSRM 道路距離時才用（見 estimateRideOnRoad）。
  *
  * 跟 trip-options.ts 的步行繞路係數同一個道理，但車的值更大一點：
  * 行人可以穿小巷、走對角，車要照單行道與幹道走。
@@ -81,6 +82,11 @@ const CONGESTED_WAIT_RATIO = 0.3
 export type RideEstimate = {
   /** 估計的道路距離（公里，一位小數） */
   distanceKm: number
+  /**
+   * 距離怎麼來的。road = OSRM 道路規劃（跟叫車地圖上那條線同一條）；
+   * estimate = 直線距離 × 繞路係數。只有 road 時地圖上才能把公里數標在線旁邊。
+   */
+  distanceSource: 'road' | 'estimate'
   /** 估計車程（分鐘） */
   durationMinutes: number
   /** 預計抵達時間，HH:MM（臺北時間） */
@@ -116,17 +122,25 @@ function distanceFare(meters: number): number {
  *
  * 只需要兩端座標 —— 呼叫端負責把地名解析成座標（services/place.ts）。
  * 這裡不做地理編碼，才能同時給 agent 工具與 /ride/estimate 端點用。
+ *
+ * 同步版只用直線 × 係數。使用者會拿來跟叫車地圖對照的地方
+ * （估價頁、Agent 的估價卡、雨天頁的交通比較）要用 estimateRideOnRoad。
+ * 社群日一次算整串任務，公開 OSRM 每秒只給一次，那種地方留在同步版。
  */
 export function estimateRide(
   from: { lat: number; lon: number },
   to: { lat: number; lon: number },
   at: Date = new Date(),
+  /** OSRM 的道路距離。沒給就用直線 × 係數 */
+  measuredRoadMeters?: number | null,
 ): RideEstimate {
   const now = taipeiNow(at)
   const traffic = trafficAt(now)
 
-  const straightMeters = haversineMeters(from.lat, from.lon, to.lat, to.lon)
-  const roadMeters = straightMeters * ROAD_DETOUR_FACTOR
+  const road = measuredRoadMeters != null && measuredRoadMeters > 0
+  const roadMeters = road
+    ? measuredRoadMeters
+    : haversineMeters(from.lat, from.lon, to.lat, to.lon) * ROAD_DETOUR_FACTOR
 
   const speed = SPEED_KMH[traffic]
   const durationMinutes = Math.max(1, Math.round((roadMeters / 1_000 / speed) * 60))
@@ -151,12 +165,29 @@ export function estimateRide(
 
   return {
     distanceKm: Math.round((roadMeters / 1_000) * 10) / 10,
+    distanceSource: road ? 'road' : 'estimate',
     durationMinutes,
     eta,
     /* 取整到 5 元，跳表本來就是 5 元一跳，給到個位數是假精確 */
     fare: { min: Math.round(base / 5) * 5, max: Math.round(max / 5) * 5 },
     traffic,
     nightSurcharge: night,
-    basis: '依臺北市公告計程車費率估算，非 yoxi 實際報價',
+    basis: road
+      ? '依道路距離與臺北市公告計程車費率估算，非 yoxi 實際報價'
+      : '依臺北市公告計程車費率估算，非 yoxi 實際報價',
   }
+}
+
+/**
+ * 用 OSRM 的道路距離估價；拿不到就退回直線 × 係數（等於 estimateRide）。
+ * 永遠不會因為 OSRM 而 reject。
+ */
+export async function estimateRideOnRoad(
+  from: { lat: number; lon: number },
+  to: { lat: number; lon: number },
+  at: Date = new Date(),
+): Promise<RideEstimate> {
+  const straightMeters = haversineMeters(from.lat, from.lon, to.lat, to.lon)
+  const meters = await roadDistanceMeters(from, to, straightMeters)
+  return estimateRide(from, to, at, meters)
 }

@@ -183,7 +183,14 @@ export function EstimateScreen() {
           <CrosshairIcon />
         </button>
 
-        <RouteLegend driving={map.driving} />
+        <RouteLegend
+          driving={map.driving}
+          distanceKm={
+            estimate.status === 'ready' && estimate.data.distanceSource === 'road'
+              ? estimate.data.distanceKm
+              : null
+          }
+        />
       </MapBackdrop>
 
       <BottomSheet>

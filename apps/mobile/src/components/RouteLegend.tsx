@@ -3,19 +3,22 @@ import type { DrivingRoute } from '@/lib/drivingRoute'
 /*
  * 地圖上那條紅線的圖例：告訴使用者這是什麼路線、從哪裡來。
  *
- * 只寫「最佳行車路線」不寫公里數：路線形狀來自 OSRM，但車資與車程是後端估的
- * （services/ride.ts），兩邊的距離不會一模一樣 —— 地圖上多一個數字，
- * 就會跟下面面板的數字互相打架。
+ * 公里數只在「估價也是用道路距離算的」時才標（estimate.distanceSource === 'road'）：
+ * 那時後端跟這條線問的是同一個 OSRM、同一組座標，數字就是這條線的長度。
+ * 估價退回直線 × 係數時不標 —— 線旁邊放一個不是這條線的數字，只會互相打架。
  *
  * OSRM 拿不到時地圖畫的是虛線直線，這裡要照實講，不能還叫它「最佳路線」。
  */
 export function RouteLegend({
   driving,
   label = '最佳行車路線',
+  distanceKm = null,
   className = 'bottom-5',
 }: {
   driving: DrivingRoute | null
   label?: string
+  /** 這條線的道路距離。只在估價的距離來源是 road 時傳 */
+  distanceKm?: number | null
   /** 垂直位置。地圖底部已經有別的膠囊時往上疊 */
   className?: string
 }) {
@@ -37,8 +40,12 @@ export function RouteLegend({
       {road ? (
         <span>
           {label}
-          {/* 320 寬時右下角的定位鈕會貼上來，後半句先收掉 */}
-          <span className="max-[359px]:hidden">・依道路規劃</span>
+          {distanceKm != null ? (
+            `・約 ${distanceKm} 公里`
+          ) : (
+            /* 320 寬時右下角的定位鈕會貼上來，後半句先收掉 */
+            <span className="max-[359px]:hidden">・依道路規劃</span>
+          )}
         </span>
       ) : (
         <span>

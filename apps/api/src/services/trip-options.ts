@@ -1,4 +1,4 @@
-import { estimateRide, type RideEstimate } from './ride.ts'
+import { estimateRideOnRoad, type RideEstimate } from './ride.ts'
 import { planMetroRoutes, type RoutePlan } from './route-planner.ts'
 import {
   findNearestStation,
@@ -338,7 +338,7 @@ export async function compareTripOptions(
   options.push({
     mode: 'ride',
     distanceMeters,
-    estimate: estimateRide({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon }),
+    estimate: await estimateRideOnRoad({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon }),
   })
 
   /* 依實際時間排序。有依據的排前面，這是「誠實比較」的具體意思。 */

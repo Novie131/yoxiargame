@@ -28,7 +28,7 @@ import {
   haversineMeters,
   isBusCity,
 } from '../services/tdx.ts'
-import { estimateRide } from '../services/ride.ts'
+import { estimateRideOnRoad } from '../services/ride.ts'
 import { getWeather, type Weather } from '../services/weather.ts'
 
 /*
@@ -398,7 +398,8 @@ export function createTools(userRef: string, location?: UserLocation | null) {
           }
           if (!destination) return { from: origin.label, to, error: `查不到「${to}」這個地點` }
 
-          const estimate = estimateRide(origin, destination)
+          /* 跟估價頁同一個算法，Agent 說的公里數與車資才會跟按下去之後看到的一樣 */
+          const estimate = await estimateRideOnRoad(origin, destination)
 
           return {
             from: origin.label,
