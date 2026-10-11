@@ -29,6 +29,8 @@ const groups: Array<{ title: string; items: Item[] }> = [
     items: [
       { to: '/rainy', label: '下雨情境', file: '初步確定方向/rainy-commute-notification.png' },
       { to: '/uv', label: '紫外線警示', file: '初步確定方向/uv-alert-commute-notification.png' },
+      { to: '/rainy/summary', label: '天氣摘要（雨天四頁入口）', file: 'Figma b9e 613-704 的 01' },
+      { to: '/push/indoor', label: '定時推薦・雨天室內', file: 'Figma b9e 613-733（05B）' },
     ],
   },
   {
@@ -42,7 +44,7 @@ const groups: Array<{ title: string; items: Item[] }> = [
     ],
   },
   {
-    /* 探索頁還沒有連到這裡的卡片，暫時只從這裡進 */
+    /* 正式入口：探索頁「今日旅行推薦」、Agent 散步路線卡 */
     title: '探索・IG 路線',
     items: [
       {

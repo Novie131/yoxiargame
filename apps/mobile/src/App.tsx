@@ -18,7 +18,9 @@ import { DriverArrivingScreen } from '@/screens/ride/DriverArrivingScreen'
 import { EstimateScreen } from '@/screens/ride/EstimateScreen'
 import { SettlementScreen } from '@/screens/ride/SettlementScreen'
 import { TripInProgressScreen } from '@/screens/ride/TripInProgressScreen'
+import { PushRecommendScreen } from '@/screens/PushRecommendScreen'
 import { RainyCommuteScreen } from '@/screens/RainyCommuteScreen'
+import { RainySummaryScreen } from '@/screens/RainySummaryScreen'
 import { IgRouteDetailScreen } from '@/screens/IgRouteDetailScreen'
 import { RainyCommutePlanScreen } from '@/screens/rainy/RainyCommutePlanScreen'
 import { RainyHourlyWeatherScreen } from '@/screens/rainy/RainyHourlyWeatherScreen'
@@ -48,6 +50,8 @@ function ShellRoutes() {
         <Route path="/interests" element={<AgentInterestsScreen />} />
         <Route path="/commute-setup" element={<CommuteSetupScreen />} />
         <Route path="/rainy" element={<RainyCommuteScreen />} />
+        <Route path="/rainy/summary" element={<RainySummaryScreen />} />
+        <Route path="/push/indoor" element={<PushRecommendScreen />} />
         <Route path="/rainy/commute" element={<RainyCommutePlanScreen />} />
         <Route path="/rainy/ride" element={<RainyRideConfirmScreen />} />
         <Route path="/rainy/metro" element={<RainyMetroRouteScreen />} />
