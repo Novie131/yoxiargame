@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 
+import { CommunityDayCard } from '@/components/CommunityDayCard'
 import { MissionSheet } from '@/components/MissionSheet'
+import { missionOfLeg, useCommunityDay } from '@/lib/communityDay'
 import { CATEGORIES, PLACES, THEME, usePlan, type Category } from '@/lib/explorePlan'
 import { useUserLocation } from '@/lib/location'
 import { useNearbyMissions } from '@/lib/missions'
@@ -29,9 +31,11 @@ import { useAskAgent, useSky } from '@/screens/explore/hooks'
  *   加入行程      真的存進今天的行程（lib/trips），/trips 看得到
  *   搜尋／麥克風  交給首頁的 Agent 對話
  *
- * 舊版（地圖＋任務＋社群日）已經被這張稿取代。唯一保留的是任務深連結：
- * 對話卡與通知會導到 /explore?mission=<id>&lat=&lon=，那條路不能斷，
- * 所以帶著參數進來時照樣打開任務面板（見 MissionFromLink）。
+ * 舊版（地圖＋任務＋社群日）已經被這張稿取代，保留兩樣：
+ *   任務深連結  對話卡與通知會導到 /explore?mission=<id>&lat=&lon=，那條路不能斷，
+ *               所以帶著參數進來時照樣打開任務面板（見 MissionFromLink）
+ *   社群日卡片  稿上沒有，但少了它社群日在畫面上就沒有入口。
+ *               放在稿的內容之後，沒有進行中的活動時整段不出現，平常不會打亂版面
  */
 
 export function ExploreScreen() {
@@ -59,6 +63,21 @@ export function ExploreScreen() {
   }, [hash])
 
   const missionId = params.get('mission')
+
+  /*
+   * 社群日只用精確定位查：沒有定位時退回的預設座標不是使用者的位置，
+   * 推一場他可能根本不在附近的活動沒有意義（hook 收到 null 會回 day: null）。
+   */
+  const me = useUserLocation()
+  /* 面板裡可能剛打完卡，關掉時重查一次，卡片上的「還有幾個點」才會跟著變 */
+  const [dayRefresh, setDayRefresh] = useState(0)
+  const communityDay = useCommunityDay(
+    me.precise ? { lat: me.lat, lon: me.lon } : null,
+    dayRefresh,
+  )
+  const day = communityDay.status === 'ready' ? communityDay.day : null
+  const [pickedLegId, setPickedLegId] = useState<string | null>(null)
+  const pickedLeg = day?.legs.find((l) => l.mission.id === pickedLegId)
 
   return (
     /*
@@ -233,6 +252,12 @@ export function ExploreScreen() {
             景點與照片皆為示意；加入候選後再調整行程。
           </p>
         </section>
+
+        {day && (
+          <section className="mt-5" aria-label="社群日">
+            <CommunityDayCard day={day} onPick={setPickedLegId} />
+          </section>
+        )}
       </div>
 
       <PromptBar placeholder="搜尋景點、主題與小行程" onSubmit={ask} />
@@ -243,6 +268,18 @@ export function ExploreScreen() {
           lat={params.get('lat')}
           lon={params.get('lon')}
           onClose={() => setParams({}, { replace: true })}
+        />
+      )}
+
+      {/* 社群日的點可能超出附近任務的搜尋半徑，直接用行程裡那一筆補成完整的 Mission */}
+      {day && pickedLeg && (
+        <MissionSheet
+          mission={missionOfLeg(pickedLeg, day.name)}
+          origin={me.precise ? { lat: me.lat, lon: me.lon } : null}
+          onClose={() => {
+            setPickedLegId(null)
+            setDayRefresh((n) => n + 1)
+          }}
         />
       )}
     </div>
