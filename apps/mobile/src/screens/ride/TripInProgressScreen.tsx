@@ -5,6 +5,7 @@ import { BottomSheet } from '@/components/BottomSheet'
 import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { Modal } from '@/components/Modal'
+import { RouteLegend } from '@/components/RouteLegend'
 import { AlertIcon, ShieldIcon } from '@/components/icons'
 import { pointAlong } from '@/lib/drivingRoute'
 import { completeRide, formatFare, useActiveRide, useRideProgress } from '@/lib/ride'
@@ -140,6 +141,8 @@ export function TripInProgressScreen() {
             {arrived ? '感謝搭乘' : '安全行駛中'}
           </span>
         </div>
+
+        <RouteLegend driving={map.driving} />
       </MapBackdrop>
 
       <BottomSheet>

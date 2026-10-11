@@ -5,6 +5,7 @@ import { BottomSheet } from '@/components/BottomSheet'
 import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
 import { Modal } from '@/components/Modal'
+import { RouteLegend } from '@/components/RouteLegend'
 import {
   ChatIcon,
   CrosshairIcon,
@@ -122,6 +123,8 @@ export function DriverArrivingScreen() {
         >
           <CrosshairIcon />
         </button>
+
+        <RouteLegend driving={map.driving} label="司機來接你的路線" />
       </MapBackdrop>
 
       <BottomSheet>

@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { BottomSheet } from '@/components/BottomSheet'
 import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
+import { RouteLegend } from '@/components/RouteLegend'
 import {
   CrosshairIcon,
   HomeIcon,
@@ -20,7 +21,7 @@ import {
   useLocationState,
 } from '@/lib/location'
 import type { RidePlace } from '@/lib/ride'
-import { nearbyCars } from '@/lib/rideMap'
+import { nearbyCars, useRideMapRoute } from '@/lib/rideMap'
 import { isExplorePlanTrip } from '@/lib/explorePlan'
 import { useTrips } from '@/lib/trips'
 
@@ -81,6 +82,18 @@ export function BookingScreen() {
     location.label ?? (location.precise ? '目前位置' : `${FALLBACK_LABEL}（預設位置）`)
 
   const pickup: RidePlace = { label: pickupLabel, lat: location.lat, lon: location.lon }
+
+  /*
+   * 選好目的地就先畫出最佳行車路線，並把上車點與目的地一起框進畫面 ——
+   * 使用者按「呼叫 yoxi」之前就看得到要走哪條路。還沒選目的地時不畫、不 fit，
+   * 地圖照舊以目前位置為中心。
+   */
+  const pickupAt = useMemo(() => ({ lng: location.lon, lat: location.lat }), [location.lon, location.lat])
+  const dropoffAt = useMemo(
+    () => (dropoff ? { lng: dropoff.lon, lat: dropoff.lat } : null),
+    [dropoff],
+  )
+  const map = useRideMapRoute(dropoffAt ? pickupAt : null, dropoffAt)
 
   /*
    * 地圖上的標記：上車點、周圍的 yoxi 車（示意）、選好的目的地。
@@ -163,6 +176,8 @@ export function BookingScreen() {
         /* 選好目的地就把視野帶過去，讓使用者確認自己查到的是哪裡 */
         center={dropoff ?? { lat: location.lat, lon: location.lon }}
         markers={markers}
+        route={dropoff ? map.route : null}
+        fitBounds={dropoff ? map.fitBounds : null}
         /* 上車點自己畫成主色圓點（設計稿），藍點會疊在同一個位置 */
         showUserLocation={false}
       >
@@ -230,6 +245,7 @@ export function BookingScreen() {
         <p className="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-surface/85 px-2.5 py-1 text-[11px] text-subtle">
           附近車輛為示意・非即時車況
         </p>
+        {dropoff && <RouteLegend driving={map.driving} className="bottom-12" />}
 
         <button
           type="button"

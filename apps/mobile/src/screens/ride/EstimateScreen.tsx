@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { BottomSheet } from '@/components/BottomSheet'
 import type { MapMarker } from '@/components/Map'
 import { MapBackdrop } from '@/components/MapBackdrop'
+import { RouteLegend } from '@/components/RouteLegend'
 import { CarIcon, ChevronLeftIcon, CrosshairIcon } from '@/components/icons'
 import { FALLBACK_LABEL, requestLocation, useUserLocation } from '@/lib/location'
 import {
@@ -181,6 +182,8 @@ export function EstimateScreen() {
         >
           <CrosshairIcon />
         </button>
+
+        <RouteLegend driving={map.driving} />
       </MapBackdrop>
 
       <BottomSheet>
